@@ -1,0 +1,92 @@
+{
+  "theme": "dark",
+  "archetype": "Archetype 4 (Swiss & High-Contrast)",
+  "mood": "Impenetrable, secure, fast, and technical. The UI should fade away to prioritize the chat, but structural borders should feel rigid and safe.",
+  "colors": {
+    "background": "#0A0A0A",
+    "surface": "#141414",
+    "surface_hover": "#1F1F1F",
+    "border": "rgba(255,255,255,0.1)",
+    "primary": "#FFFFFF",
+    "primary_foreground": "#0A0A0A",
+    "accent": "#00FF66",
+    "accent_foreground": "#0A0A0A",
+    "muted": "#888888",
+    "muted_foreground": "#A1A1A1",
+    "error": "#FF3333"
+  },
+  "typography": {
+    "headings": "Outfit",
+    "interface": "Work Sans",
+    "mono": "IBM Plex Mono",
+    "scale": {
+      "h1": "text-4xl sm:text-5xl lg:text-6xl tracking-tighter font-medium",
+      "h2": "text-2xl sm:text-3xl lg:text-4xl tracking-tight",
+      "h3": "text-xl sm:text-2xl tracking-tight",
+      "body": "text-base leading-relaxed text-gray-300",
+      "labels": "text-xs tracking-[0.2em] uppercase text-gray-500",
+      "code": "font-mono text-sm text-green-400"
+    }
+  },
+  "spacing_and_layout": {
+    "philosophy": "Generous spacing for the landing page to build trust. Extremely dense, Control Room Grid spacing for the actual messaging app.",
+    "marketing_grid": "Bento Grid Mode A (Tetris Grid), gap-8 to gap-12, asymmetrical.",
+    "app_layout": "Control Room Grid. 100vh height. 4-column layout: Servers (72px), Channels (240px), Main Chat (Flex), Right Sidebar/Profile (240px).",
+    "borders": "Grid Borders (The Technical Look). 1px solid border-white/10 to separate columns and rows. Max border radius 8px (rounded-md)."
+  },
+  "components": {
+    "strategy": "Shadcn/UI components, customized to be visually flat and sharp.",
+    "buttons": "Square edges or slight radius. High contrast (bg-white text-black). Hover: bg-gray-200. Accent buttons for E2EE verify: bg-[#00FF66] text-black.",
+    "inputs": "bg-transparent border border-white/20 focus:border-[#00FF66] focus:ring-1 focus:ring-[#00FF66].",
+    "chat_bubbles": "Flat, cardless look. Sent by user: bg-white/10 text-white. Received: bg-transparent border border-white/10 text-gray-300.",
+    "modals": "Crystal Glassmorphism for security overlays (like 2FA setup): bg-black/60 backdrop-blur-xl border border-white/10."
+  },
+  "motion": {
+    "philosophy": "Instantaneous. Meaningful micro-interactions.",
+    "chat_entrance": "opacity 0 to 1, translate-y 10 to 0. Fast 200ms ease-out.",
+    "hover_states": "Explicit color changes on hover."
+  },
+  "icons_and_assets": {
+    "library": "@phosphor-icons/react",
+    "command": "yarn add @phosphor-icons/react"
+  },
+  "image_urls": {
+    "hero_background": {
+      "url": "https://images.unsplash.com/photo-1759159347827-de3a54002de7?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzF8MHwxfHNlYXJjaHwxfHxkYXJrJTIwYWJzdHJhY3QlMjBnZW9tZXRyaWMlMjB0ZWNofGVufDB8fHx8MTc3NzUyMDM2MHww&ixlib=rb-4.1.0&q=85",
+      "description": "Rows of dark cubes with glowing green lines. Use for landing page hero or auth screen background."
+    },
+    "feature_encryption": {
+      "url": "https://images.unsplash.com/photo-1773999088234-b7c26a681ff8?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODh8MHwxfHNlYXJjaHwyfHxmaWJlciUyMG9wdGljcyUyMGRhcmslMjBiYWNrZ3JvdW5kfGVufDB8fHx8MTc3NzUyMDM1OXww&ixlib=rb-4.1.0&q=85",
+      "description": "Golden fiber optic lights against a black background. Use for End-to-End Encryption features section."
+    },
+    "avatars": [
+      {
+        "url": "https://images.unsplash.com/photo-1758600587730-a11917c13b85?crop=entropy&cs=srgb&fm=jpg",
+        "description": "User Avatar 1"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1764545973653-94c40d993495?crop=entropy&cs=srgb&fm=jpg",
+        "description": "User Avatar 2"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1765776830139-72b2184dae5a?crop=entropy&cs=srgb&fm=jpg",
+        "description": "User Avatar 3"
+      },
+      {
+        "url": "https://images.pexels.com/photos/10620268/pexels-photo-10620268.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "User Avatar 4"
+      }
+    ]
+  },
+  "instructions_to_main_agent": [
+    "Build a React (Frontend) and FastAPI (Backend) application using Tailwind CSS and Shadcn UI.",
+    "Implement the landing page highlighting End-to-End Encryption (E2EE), using the provided geometric tech backgrounds.",
+    "Implement the main messaging application with a Discord/Teams style layout (Servers Sidebar -> Channels -> Chat -> Details).",
+    "Use a strict 1px grid border layout (border-white/10) for the app UI to expose the structural skeleton and separate the sidebars and chat area clearly.",
+    "Ensure high contrast text (WCAG AA). NEVER use pure #000000; use #0A0A0A.",
+    "Use 'IBM Plex Mono' for all encryption keys, JWT tokens, UUIDs, and security fingerprints.",
+    "Use '@phosphor-icons/react' for all icons.",
+    "Ensure 'data-testid' is added to ALL interactive elements (buttons, inputs, servers, channels).",
+    "Implement the profile settings page to explicitly show the public encryption key."
+  ]
+}
