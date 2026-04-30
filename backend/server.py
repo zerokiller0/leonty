@@ -1,89 +1,593 @@
-from fastapi import FastAPI, APIRouter
 from dotenv import load_dotenv
-from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
-import os
-import logging
 from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict
-from typing import List
-import uuid
-from datetime import datetime, timezone
-
 
 ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
+load_dotenv(ROOT_DIR / ".env")
 
-# MongoDB connection
-mongo_url = os.environ['MONGO_URL']
+import os
+import uuid
+import base64
+import secrets
+import logging
+from datetime import datetime, timezone, timedelta
+from typing import List, Optional
+
+import bcrypt
+import jwt
+import pyotp
+import qrcode
+from io import BytesIO
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, UploadFile, File
+from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.middleware.cors import CORSMiddleware
+from motor.motor_asyncio import AsyncIOMotorClient
+from pydantic import BaseModel, Field, EmailStr
+
+# Mongo
+mongo_url = os.environ["MONGO_URL"]
 client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+db = client[os.environ["DB_NAME"]]
 
-# Create the main app without a prefix
-app = FastAPI()
+# Files on disk
+UPLOAD_DIR = ROOT_DIR / "uploads"
+UPLOAD_DIR.mkdir(exist_ok=True)
 
-# Create a router with the /api prefix
-api_router = APIRouter(prefix="/api")
+JWT_ALGORITHM = "HS256"
+ACCESS_MIN = 60 * 8  # 8h so chatting session isn't cut
+REFRESH_DAYS = 7
 
+app = FastAPI(title="Cipher Secure Messenger")
+api = APIRouter(prefix="/api")
 
-# Define Models
-class StatusCheck(BaseModel):
-    model_config = ConfigDict(extra="ignore")  # Ignore MongoDB's _id field
-    
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    client_name: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+# ---------- Helpers ----------
+def now_utc():
+    return datetime.now(timezone.utc)
 
-class StatusCheckCreate(BaseModel):
-    client_name: str
+def iso(dt):
+    return dt.isoformat() if isinstance(dt, datetime) else dt
 
-# Add your routes to the router instead of directly to app
-@api_router.get("/")
+def hash_password(pw: str) -> str:
+    return bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
+
+def verify_password(pw: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(pw.encode(), hashed.encode())
+    except Exception:
+        return False
+
+def jwt_secret():
+    return os.environ["JWT_SECRET"]
+
+def create_access(user_id: str, email: str):
+    payload = {"sub": user_id, "email": email,
+               "exp": now_utc() + timedelta(minutes=ACCESS_MIN), "type": "access"}
+    return jwt.encode(payload, jwt_secret(), algorithm=JWT_ALGORITHM)
+
+def create_refresh(user_id: str):
+    payload = {"sub": user_id, "exp": now_utc() + timedelta(days=REFRESH_DAYS), "type": "refresh"}
+    return jwt.encode(payload, jwt_secret(), algorithm=JWT_ALGORITHM)
+
+def set_auth_cookies(resp: Response, access: str, refresh: str):
+    resp.set_cookie("access_token", access, httponly=True, secure=True, samesite="none",
+                    max_age=ACCESS_MIN * 60, path="/")
+    resp.set_cookie("refresh_token", refresh, httponly=True, secure=True, samesite="none",
+                    max_age=REFRESH_DAYS * 86400, path="/")
+
+def clear_auth_cookies(resp: Response):
+    resp.delete_cookie("access_token", path="/")
+    resp.delete_cookie("refresh_token", path="/")
+
+def public_user(u: dict) -> dict:
+    return {
+        "id": u["id"],
+        "email": u["email"],
+        "username": u.get("username"),
+        "display_name": u.get("display_name"),
+        "avatar_url": u.get("avatar_url"),
+        "public_key": u.get("public_key"),
+        "two_factor_enabled": bool(u.get("two_factor_secret")),
+        "created_at": iso(u.get("created_at")),
+    }
+
+async def get_current_user(request: Request) -> dict:
+    token = request.cookies.get("access_token")
+    if not token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+    if not token:
+        raise HTTPException(401, "Not authenticated")
+    try:
+        payload = jwt.decode(token, jwt_secret(), algorithms=[JWT_ALGORITHM])
+        if payload.get("type") != "access":
+            raise HTTPException(401, "Invalid token type")
+        user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0})
+        if not user:
+            raise HTTPException(401, "User not found")
+        return user
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(401, "Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(401, "Invalid token")
+
+# ---------- Models ----------
+class RegisterIn(BaseModel):
+    email: EmailStr
+    password: str
+    username: str
+    display_name: Optional[str] = None
+    public_key: str  # PEM encoded RSA public key (client-side generated)
+    encrypted_private_key: str  # Private key encrypted with password-derived AES key
+    key_salt: str  # Salt used for PBKDF2 on client
+
+class LoginIn(BaseModel):
+    email: EmailStr
+    password: str
+    totp_code: Optional[str] = None
+
+class TwoFAVerifyIn(BaseModel):
+    code: str
+
+class UpdateProfileIn(BaseModel):
+    display_name: Optional[str] = None
+    avatar_url: Optional[str] = None
+
+class ServerCreateIn(BaseModel):
+    name: str
+    description: Optional[str] = ""
+
+class ChannelCreateIn(BaseModel):
+    name: str
+    type: str = "text"  # text | voice
+
+class MessageCreateIn(BaseModel):
+    content: str  # For channel messages: plaintext stored encrypted at-rest. Non-E2EE.
+    attachment_id: Optional[str] = None
+
+class DMSendIn(BaseModel):
+    recipient_id: str
+    # E2EE ciphertexts: sender_ciphertext encrypted with sender's public key,
+    # recipient_ciphertext encrypted with recipient's public key
+    sender_ciphertext: str
+    recipient_ciphertext: str
+    attachment_id: Optional[str] = None
+
+class JoinServerIn(BaseModel):
+    invite_code: str
+
+# ---------- Auth Routes ----------
+@api.post("/auth/register")
+async def register(body: RegisterIn, request: Request, response: Response):
+    email = body.email.lower()
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(400, "Email already registered")
+    if await db.users.find_one({"username": body.username}):
+        raise HTTPException(400, "Username already taken")
+    uid = str(uuid.uuid4())
+    user = {
+        "id": uid,
+        "email": email,
+        "username": body.username,
+        "display_name": body.display_name or body.username,
+        "avatar_url": None,
+        "password_hash": hash_password(body.password),
+        "public_key": body.public_key,
+        "encrypted_private_key": body.encrypted_private_key,
+        "key_salt": body.key_salt,
+        "two_factor_secret": None,
+        "created_at": now_utc().isoformat(),
+    }
+    await db.users.insert_one(user)
+    await log_session(request, uid, "register")
+    access = create_access(uid, email)
+    refresh = create_refresh(uid)
+    set_auth_cookies(response, access, refresh)
+    return {"user": public_user(user), "access_token": access,
+            "encrypted_private_key": body.encrypted_private_key, "key_salt": body.key_salt}
+
+@api.post("/auth/login")
+async def login(body: LoginIn, request: Request, response: Response):
+    email = body.email.lower()
+    user = await db.users.find_one({"email": email}, {"_id": 0})
+    if not user or not verify_password(body.password, user["password_hash"]):
+        await log_session(request, user["id"] if user else "unknown", "login_failed")
+        raise HTTPException(401, "Invalid credentials")
+    if user.get("two_factor_secret"):
+        if not body.totp_code:
+            return {"two_factor_required": True}
+        totp = pyotp.TOTP(user["two_factor_secret"])
+        if not totp.verify(body.totp_code, valid_window=1):
+            raise HTTPException(401, "Invalid 2FA code")
+    await log_session(request, user["id"], "login")
+    access = create_access(user["id"], email)
+    refresh = create_refresh(user["id"])
+    set_auth_cookies(response, access, refresh)
+    return {"user": public_user(user), "access_token": access,
+            "encrypted_private_key": user.get("encrypted_private_key"),
+            "key_salt": user.get("key_salt")}
+
+@api.post("/auth/logout")
+async def logout(response: Response, user: dict = Depends(get_current_user)):
+    clear_auth_cookies(response)
+    return {"ok": True}
+
+@api.get("/auth/me")
+async def me(user: dict = Depends(get_current_user)):
+    return {"user": public_user(user),
+            "encrypted_private_key": user.get("encrypted_private_key"),
+            "key_salt": user.get("key_salt")}
+
+@api.post("/auth/refresh")
+async def refresh_token(request: Request, response: Response):
+    rt = request.cookies.get("refresh_token")
+    if not rt:
+        raise HTTPException(401, "No refresh token")
+    try:
+        payload = jwt.decode(rt, jwt_secret(), algorithms=[JWT_ALGORITHM])
+        if payload.get("type") != "refresh":
+            raise HTTPException(401, "Invalid token")
+        uid = payload["sub"]
+        user = await db.users.find_one({"id": uid}, {"_id": 0})
+        if not user:
+            raise HTTPException(401, "User missing")
+        new_access = create_access(uid, user["email"])
+        response.set_cookie("access_token", new_access, httponly=True, secure=True,
+                            samesite="none", max_age=ACCESS_MIN * 60, path="/")
+        return {"access_token": new_access}
+    except jwt.InvalidTokenError:
+        raise HTTPException(401, "Invalid token")
+
+# ---------- 2FA ----------
+@api.post("/auth/2fa/setup")
+async def twofa_setup(user: dict = Depends(get_current_user)):
+    secret = pyotp.random_base32()
+    # store pending
+    await db.users.update_one({"id": user["id"]}, {"$set": {"two_factor_pending": secret}})
+    uri = pyotp.TOTP(secret).provisioning_uri(name=user["email"], issuer_name="Cipher")
+    # generate QR
+    img = qrcode.make(uri)
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    b64 = base64.b64encode(buf.getvalue()).decode()
+    return {"secret": secret, "qr_code": f"data:image/png;base64,{b64}", "uri": uri}
+
+@api.post("/auth/2fa/verify")
+async def twofa_verify(body: TwoFAVerifyIn, user: dict = Depends(get_current_user)):
+    pending = user.get("two_factor_pending")
+    if not pending:
+        raise HTTPException(400, "No 2FA setup pending")
+    if not pyotp.TOTP(pending).verify(body.code, valid_window=1):
+        raise HTTPException(400, "Invalid code")
+    await db.users.update_one({"id": user["id"]},
+                              {"$set": {"two_factor_secret": pending},
+                               "$unset": {"two_factor_pending": ""}})
+    return {"enabled": True}
+
+@api.post("/auth/2fa/disable")
+async def twofa_disable(body: TwoFAVerifyIn, user: dict = Depends(get_current_user)):
+    secret = user.get("two_factor_secret")
+    if not secret:
+        raise HTTPException(400, "2FA not enabled")
+    if not pyotp.TOTP(secret).verify(body.code, valid_window=1):
+        raise HTTPException(400, "Invalid code")
+    await db.users.update_one({"id": user["id"]}, {"$unset": {"two_factor_secret": ""}})
+    return {"enabled": False}
+
+# ---------- Sessions / Devices ----------
+async def log_session(request: Request, user_id: str, action: str):
+    ua = request.headers.get("user-agent", "unknown")
+    ip = request.client.host if request.client else "unknown"
+    await db.sessions.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": user_id,
+        "action": action,
+        "ip": ip,
+        "user_agent": ua,
+        "created_at": now_utc().isoformat(),
+    })
+
+@api.get("/sessions")
+async def get_sessions(user: dict = Depends(get_current_user)):
+    items = await db.sessions.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return {"sessions": items}
+
+# ---------- Public key lookup ----------
+@api.get("/users/search")
+async def search_users(q: str, user: dict = Depends(get_current_user)):
+    if not q:
+        return {"users": []}
+    cursor = db.users.find(
+        {"$or": [{"username": {"$regex": q, "$options": "i"}},
+                 {"display_name": {"$regex": q, "$options": "i"}},
+                 {"email": {"$regex": q, "$options": "i"}}]},
+        {"_id": 0}
+    ).limit(20)
+    return {"users": [public_user(u) async for u in cursor if u["id"] != user["id"]]}
+
+@api.get("/users/{user_id}")
+async def get_user(user_id: str, user: dict = Depends(get_current_user)):
+    u = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not u:
+        raise HTTPException(404, "Not found")
+    return {"user": public_user(u)}
+
+@api.patch("/users/me")
+async def update_me(body: UpdateProfileIn, user: dict = Depends(get_current_user)):
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    if updates:
+        await db.users.update_one({"id": user["id"]}, {"$set": updates})
+    u = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    return {"user": public_user(u)}
+
+# ---------- Servers ----------
+def gen_invite():
+    return secrets.token_urlsafe(6)
+
+@api.post("/servers")
+async def create_server(body: ServerCreateIn, user: dict = Depends(get_current_user)):
+    sid = str(uuid.uuid4())
+    server = {
+        "id": sid,
+        "name": body.name,
+        "description": body.description,
+        "owner_id": user["id"],
+        "invite_code": gen_invite(),
+        "members": [user["id"]],
+        "created_at": now_utc().isoformat(),
+    }
+    await db.servers.insert_one(server)
+    # Default channel
+    await db.channels.insert_one({
+        "id": str(uuid.uuid4()),
+        "server_id": sid,
+        "name": "general",
+        "type": "text",
+        "created_at": now_utc().isoformat(),
+    })
+    server.pop("_id", None)
+    return {"server": server}
+
+@api.get("/servers")
+async def list_servers(user: dict = Depends(get_current_user)):
+    items = await db.servers.find({"members": user["id"]}, {"_id": 0}).to_list(200)
+    return {"servers": items}
+
+@api.get("/servers/{server_id}")
+async def get_server(server_id: str, user: dict = Depends(get_current_user)):
+    s = await db.servers.find_one({"id": server_id, "members": user["id"]}, {"_id": 0})
+    if not s:
+        raise HTTPException(404, "Not found")
+    members = await db.users.find({"id": {"$in": s["members"]}}, {"_id": 0}).to_list(500)
+    return {"server": s, "members": [public_user(m) for m in members]}
+
+@api.post("/servers/join")
+async def join_server(body: JoinServerIn, user: dict = Depends(get_current_user)):
+    s = await db.servers.find_one({"invite_code": body.invite_code}, {"_id": 0})
+    if not s:
+        raise HTTPException(404, "Invalid invite code")
+    if user["id"] not in s["members"]:
+        await db.servers.update_one({"id": s["id"]}, {"$addToSet": {"members": user["id"]}})
+    s = await db.servers.find_one({"id": s["id"]}, {"_id": 0})
+    return {"server": s}
+
+@api.delete("/servers/{server_id}")
+async def delete_server(server_id: str, user: dict = Depends(get_current_user)):
+    s = await db.servers.find_one({"id": server_id}, {"_id": 0})
+    if not s or s["owner_id"] != user["id"]:
+        raise HTTPException(403, "Not allowed")
+    await db.servers.delete_one({"id": server_id})
+    await db.channels.delete_many({"server_id": server_id})
+    await db.messages.delete_many({"server_id": server_id})
+    return {"ok": True}
+
+# ---------- Channels ----------
+@api.post("/servers/{server_id}/channels")
+async def create_channel(server_id: str, body: ChannelCreateIn, user: dict = Depends(get_current_user)):
+    s = await db.servers.find_one({"id": server_id, "members": user["id"]}, {"_id": 0})
+    if not s:
+        raise HTTPException(404, "Server not found")
+    ch = {
+        "id": str(uuid.uuid4()),
+        "server_id": server_id,
+        "name": body.name,
+        "type": body.type,
+        "created_at": now_utc().isoformat(),
+    }
+    await db.channels.insert_one(ch)
+    ch.pop("_id", None)
+    return {"channel": ch}
+
+@api.get("/servers/{server_id}/channels")
+async def list_channels(server_id: str, user: dict = Depends(get_current_user)):
+    s = await db.servers.find_one({"id": server_id, "members": user["id"]}, {"_id": 0})
+    if not s:
+        raise HTTPException(404, "Not found")
+    items = await db.channels.find({"server_id": server_id}, {"_id": 0}).sort("created_at", 1).to_list(200)
+    return {"channels": items}
+
+# ---------- Messages (channel) ----------
+@api.post("/channels/{channel_id}/messages")
+async def send_message(channel_id: str, body: MessageCreateIn, user: dict = Depends(get_current_user)):
+    ch = await db.channels.find_one({"id": channel_id}, {"_id": 0})
+    if not ch:
+        raise HTTPException(404, "Channel not found")
+    s = await db.servers.find_one({"id": ch["server_id"], "members": user["id"]}, {"_id": 0})
+    if not s:
+        raise HTTPException(403, "Not a member")
+    msg = {
+        "id": str(uuid.uuid4()),
+        "channel_id": channel_id,
+        "server_id": ch["server_id"],
+        "sender_id": user["id"],
+        "content": body.content,
+        "attachment_id": body.attachment_id,
+        "created_at": now_utc().isoformat(),
+    }
+    await db.messages.insert_one(msg)
+    msg.pop("_id", None)
+    return {"message": msg}
+
+@api.get("/channels/{channel_id}/messages")
+async def list_messages(channel_id: str, user: dict = Depends(get_current_user)):
+    ch = await db.channels.find_one({"id": channel_id}, {"_id": 0})
+    if not ch:
+        raise HTTPException(404, "Channel not found")
+    s = await db.servers.find_one({"id": ch["server_id"], "members": user["id"]}, {"_id": 0})
+    if not s:
+        raise HTTPException(403, "Not a member")
+    items = await db.messages.find({"channel_id": channel_id}, {"_id": 0}).sort("created_at", 1).to_list(500)
+    # hydrate senders
+    sender_ids = list({m["sender_id"] for m in items})
+    users = await db.users.find({"id": {"$in": sender_ids}}, {"_id": 0}).to_list(500)
+    umap = {u["id"]: public_user(u) for u in users}
+    for m in items:
+        m["sender"] = umap.get(m["sender_id"])
+    return {"messages": items}
+
+# ---------- Direct Messages (E2EE) ----------
+@api.post("/dms")
+async def send_dm(body: DMSendIn, user: dict = Depends(get_current_user)):
+    recipient = await db.users.find_one({"id": body.recipient_id}, {"_id": 0})
+    if not recipient:
+        raise HTTPException(404, "User not found")
+    conv_id = "_".join(sorted([user["id"], body.recipient_id]))
+    msg = {
+        "id": str(uuid.uuid4()),
+        "conversation_id": conv_id,
+        "sender_id": user["id"],
+        "recipient_id": body.recipient_id,
+        "sender_ciphertext": body.sender_ciphertext,
+        "recipient_ciphertext": body.recipient_ciphertext,
+        "attachment_id": body.attachment_id,
+        "created_at": now_utc().isoformat(),
+    }
+    await db.dms.insert_one(msg)
+    msg.pop("_id", None)
+    return {"message": msg}
+
+@api.get("/dms/{user_id}")
+async def get_dms(user_id: str, user: dict = Depends(get_current_user)):
+    conv_id = "_".join(sorted([user["id"], user_id]))
+    items = await db.dms.find({"conversation_id": conv_id}, {"_id": 0}).sort("created_at", 1).to_list(500)
+    return {"messages": items}
+
+@api.get("/dms")
+async def list_conversations(user: dict = Depends(get_current_user)):
+    # aggregate
+    pipeline = [
+        {"$match": {"$or": [{"sender_id": user["id"]}, {"recipient_id": user["id"]}]}},
+        {"$sort": {"created_at": -1}},
+        {"$group": {
+            "_id": "$conversation_id",
+            "last": {"$first": "$$ROOT"},
+        }},
+    ]
+    convs = []
+    async for row in db.dms.aggregate(pipeline):
+        partner_id = row["last"]["recipient_id"] if row["last"]["sender_id"] == user["id"] else row["last"]["sender_id"]
+        partner = await db.users.find_one({"id": partner_id}, {"_id": 0})
+        if partner:
+            convs.append({
+                "partner": public_user(partner),
+                "last_message_at": row["last"]["created_at"],
+            })
+    return {"conversations": convs}
+
+# ---------- Files ----------
+@api.post("/files/upload")
+async def upload_file(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    fid = str(uuid.uuid4())
+    path = UPLOAD_DIR / fid
+    content = await file.read()
+    with open(path, "wb") as f:
+        f.write(content)
+    record = {
+        "id": fid,
+        "uploader_id": user["id"],
+        "filename": file.filename,
+        "content_type": file.content_type or "application/octet-stream",
+        "size": len(content),
+        "created_at": now_utc().isoformat(),
+    }
+    await db.files.insert_one(record)
+    record.pop("_id", None)
+    return {"file": record}
+
+@api.get("/files/{file_id}")
+async def get_file(file_id: str, user: dict = Depends(get_current_user)):
+    rec = await db.files.find_one({"id": file_id}, {"_id": 0})
+    if not rec:
+        raise HTTPException(404, "Not found")
+    path = UPLOAD_DIR / file_id
+    if not path.exists():
+        raise HTTPException(404, "Missing")
+    def iterfile():
+        with open(path, "rb") as f:
+            yield from f
+    return StreamingResponse(iterfile(), media_type=rec["content_type"],
+                             headers={"Content-Disposition": f'inline; filename="{rec["filename"]}"'})
+
+@api.get("/files/{file_id}/meta")
+async def get_file_meta(file_id: str, user: dict = Depends(get_current_user)):
+    rec = await db.files.find_one({"id": file_id}, {"_id": 0})
+    if not rec:
+        raise HTTPException(404, "Not found")
+    return {"file": rec}
+
+# ---------- Health ----------
+@api.get("/")
 async def root():
-    return {"message": "Hello World"}
+    return {"app": "Cipher", "status": "ok"}
 
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.model_dump()
-    status_obj = StatusCheck(**status_dict)
-    
-    # Convert to dict and serialize datetime to ISO string for MongoDB
-    doc = status_obj.model_dump()
-    doc['timestamp'] = doc['timestamp'].isoformat()
-    
-    _ = await db.status_checks.insert_one(doc)
-    return status_obj
+app.include_router(api)
 
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks():
-    # Exclude MongoDB's _id field from the query results
-    status_checks = await db.status_checks.find({}, {"_id": 0}).to_list(1000)
-    
-    # Convert ISO string timestamps back to datetime objects
-    for check in status_checks:
-        if isinstance(check['timestamp'], str):
-            check['timestamp'] = datetime.fromisoformat(check['timestamp'])
-    
-    return status_checks
-
-# Include the router in the main app
-app.include_router(api_router)
-
+# CORS: for credentialed cookies we need explicit origins — but frontend uses same host via ingress so same-origin. Keep permissive for preview.
+cors_origins = os.environ.get("CORS_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=cors_origins if cors_origins != ["*"] else ["*"],
+    allow_credentials=True if cors_origins != ["*"] else False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+@app.on_event("startup")
+async def startup():
+    await db.users.create_index("email", unique=True)
+    await db.users.create_index("username", unique=True)
+    await db.users.create_index("id", unique=True)
+    await db.servers.create_index("id", unique=True)
+    await db.servers.create_index("invite_code", unique=True)
+    await db.channels.create_index("id", unique=True)
+    await db.channels.create_index("server_id")
+    await db.messages.create_index("channel_id")
+    await db.dms.create_index("conversation_id")
+    await db.sessions.create_index("user_id")
+    # Admin user with placeholder keys (admin must re-register or setup keys via UI on first login)
+    admin_email = os.environ.get("ADMIN_EMAIL", "admin@cipher.io")
+    admin_pw = os.environ.get("ADMIN_PASSWORD", "Admin@Cipher2026")
+    existing = await db.users.find_one({"email": admin_email})
+    if not existing:
+        uid = str(uuid.uuid4())
+        await db.users.insert_one({
+            "id": uid,
+            "email": admin_email,
+            "username": "admin",
+            "display_name": "Admin",
+            "avatar_url": None,
+            "password_hash": hash_password(admin_pw),
+            "public_key": "PENDING",
+            "encrypted_private_key": "PENDING",
+            "key_salt": "PENDING",
+            "two_factor_secret": None,
+            "created_at": now_utc().isoformat(),
+            "role": "admin",
+        })
+        logger.info(f"Seeded admin user: {admin_email}")
+
 @app.on_event("shutdown")
-async def shutdown_db_client():
+async def shutdown():
     client.close()

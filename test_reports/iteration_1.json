@@ -1,0 +1,42 @@
+{
+  "summary": "Cipher backend: 13/13 pytest tests PASSED against public URL. Covered health, register/login/me/logout, duplicate email, unauthorized access, 2FA (setup+verify+login flow using pyotp), sessions, user search (excludes self), full server→channel→message flow with sender hydration, server join via invite, E2EE DM send/get/list-conversations (two users), file upload+download round-trip, and unauthorized endpoint enforcement.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "CORS (backend/.env)", "issue": "CORS_ORIGINS='*' with allow_credentials falls back to False (per server.py logic). Cookie-based auth from a browser on a different origin would fail. Current preview uses same-origin via ingress so Bearer tokens work; but for production, set CORS_ORIGINS to explicit comma-separated origins."},
+      {"endpoint": "POST /api/auth/login (failed)", "issue": "log_session called with user['id'] only if user exists; unknown-email failed logins are logged with 'unknown'. Minor — consider storing attempted email for rate-limit/lockout."},
+      {"endpoint": "Auth flow", "issue": "No brute-force lockout / rate limiting on /api/auth/login (playbook recommends lockout after 5 fails). login_attempts collection is mentioned in context but unused in server.py."},
+      {"endpoint": "POST /api/files/upload", "issue": "No size limit or MIME allowlist — reads entire file into memory. Acceptable for MVP, but add streaming + 25MB cap for prod."},
+      {"endpoint": "GET /api/files/{id}", "issue": "Uses sync file iterator inside async handler (yield from f). Works, but could block event loop for large files."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_cipher_backend.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: tighten CORS_ORIGINS to explicit frontend URL for production & keep allow_credentials=True",
+    "OPTIONAL: add brute-force lockout on /api/auth/login (5 fails → temporary lock) using the unused login_attempts collection",
+    "OPTIONAL: add file size cap + streaming upload to /api/files/upload"
+  ],
+  "critical_code_review_comments": [
+    "bcrypt hashing format verified ($2b$) via round-trip login success.",
+    "JWT uses HS256 with 8h access + 7d refresh; both cookie and Bearer auth supported correctly.",
+    "Mongo _id properly excluded across queries (projection {'_id':0}) and popped after insert_one.",
+    "2FA: pending secret stored separately and only promoted to two_factor_secret after verify — good.",
+    "DM E2EE: stores both sender_ciphertext & recipient_ciphertext keyed by conversation_id=sorted(uid1,uid2) — correct for symmetric retrieval.",
+    "Default 'general' channel auto-created on server create — verified.",
+    "server.py is 594 lines — nearing the 700-line threshold. Consider splitting into routers/ (auth, servers, dms, files) soon.",
+    "@app.on_event('startup'/'shutdown') is deprecated in FastAPI; migrate to lifespan context manager.",
+    "Admin seed uses placeholder PENDING keys — documented in test_credentials.md; fresh users required for E2EE tests (handled in test suite)."
+  ],
+  "updated_files": ["/app/backend/tests/test_cipher_backend.py"],
+  "success_rate": {"backend": "100%", "frontend": "not tested (backend-only request)"},
+  "test_credentials": "Admin: admin@cipher.io / Admin@Cipher2026. Fresh users auto-created per test via /api/auth/register with random TEST_ prefix.",
+  "seed_data_creation": "Each test registers its own TEST_* users. No cleanup implemented (acceptable; uses unique uuids).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All core backend flows validated via /app/backend/tests/test_cipher_backend.py (pytest). Run: `pytest backend/tests/test_cipher_backend.py -v`. Uses REACT_APP_BACKEND_URL env var (falls back to public preview URL). 2FA test uses pyotp to generate real TOTP. If frontend testing is requested next, verify that the client generates RSA-OAEP 2048 keys in-browser (Web Crypto) and sends encrypted_private_key+key_salt in register payload.",
+  "rca of the issue": "N/A — no backend bugs found."
+}
