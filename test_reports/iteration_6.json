@@ -1,0 +1,43 @@
+{
+  "summary": "Iter 6 backend regression smoke after frontend-only attachment additions. Added /app/backend/tests/test_iter6_attachments_smoke.py with 8 focused tests covering: PNG (200KB) upload, MP4 (1MB) upload + GET stream-back, PDF upload + GET stream-back, channel message with attachment_id (POST + GET roundtrip), DM with sender/recipient ciphertexts + attachment_id (POST + recipient GET roundtrip), profile PATCH smoke, emoji upload smoke, and calls /signal POST + GET drain. Result: 8/8 new smoke tests PASS. Full regression: 63/63 PASS (8 new + 55 prior from iter4/iter5/calls/cipher/guest+emojis). Zero regressions detected. Server.py NOT modified.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/files/upload", "issue": "Pre-existing (carry-over from iter 4-5): HTTPException(413) is raised after manual f.close() inside the `with open(path, 'wb') as f:` block (server.py L606-611). Cosmetic — the with-statement will re-close the already-closed handle without error, but the explicit close inside a with-block is non-idiomatic. Not a functional bug."},
+      {"endpoint": "GET /api/files/{id}", "issue": "Pre-existing (carry-over from iter 5): StreamingResponse uses `yield from f` with default chunk size on a regular file handle (server.py L633-637). Iter 5 reported intermittent 5MB byte-mismatch (~10% rate). Iter 6 1MB MP4 round-trip passed cleanly; not retested at 5MB. Worth investigating with explicit chunk size in iterfile()."},
+      {"endpoint": "POST /api/servers/{id}/emojis", "issue": "Pre-existing (carry-over from iter 5): full body read into memory before size validation. Acceptable for ≤1MB caps."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter6_attachments_smoke.py",
+    "/app/backend/tests/test_iter4_leonty.py",
+    "/app/backend/tests/test_cipher_backend.py",
+    "/app/backend/tests/test_guest_and_emojis.py",
+    "/app/backend/tests/test_calls_signaling.py",
+    "/app/test_reports/pytest/pytest_iter6_smoke.xml",
+    "/app/test_reports/pytest/pytest_iter6_full.xml"
+  ],
+  "action_items": [
+    "(Carry-over) Investigate intermittent 5MB binary upload/download byte-mismatch in StreamingResponse iterfile() — consider explicit chunk size, e.g. `for chunk in iter(lambda: f.read(1024*1024), b''): yield chunk`.",
+    "(Carry-over) server.py is 818 lines — consider splitting into routers (auth, servers, channels, dms, files, emojis, calls).",
+    "Cosmetic: in /api/files/upload, drop the explicit `f.close()` before the 413 raise (already handled by the with-block)."
+  ],
+  "critical_code_review_comments": [
+    "VERIFIED: MessageCreateIn (L148-150) and DMSendIn (L152-158) both correctly model `attachment_id: Optional[str] = None`. Both POST /channels/{id}/messages (L504-523) and POST /dms (L543-561) persist `attachment_id` on the inserted record and return it in the response.",
+    "VERIFIED: GET /channels/{id}/messages (L525-540) and GET /dms/{user_id} (L563-567) both project `{_id: 0}` and return attachment_id field as stored. No MongoDB ObjectId leak.",
+    "VERIFIED: /api/files/upload returns `{file: {id, uploader_id, filename, content_type, size, created_at}}`; content_type is preserved as the client-provided value (image/png, video/mp4, application/pdf all round-trip correctly).",
+    "VERIFIED: GET /api/files/{id} streams via StreamingResponse with `media_type=rec['content_type']` and inline Content-Disposition header. 1MB MP4 round-trip byte-equal verified.",
+    "NOTE: /api/files/{id} requires authentication (Depends(get_current_user)). Frontend rendering <img src=...> or <video src=...> directly will only work if the auth token is somehow attached to the request — likely needs frontend to fetch as blob with auth header and use object URL. Worth confirming with frontend agent."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter6_attachments_smoke.py (NEW — 8 tests)"
+  ],
+  "success_rate": {"backend": "100% (8/8 new smoke + 63/63 full regression)", "frontend": "not tested (backend-only)"},
+  "test_credentials": "Not used. Tests register their own TEST_i6_* users.",
+  "seed_data_creation": "~12 TEST_i6_* users + uploaded files (PNG, MP4, PDF) + 2 servers + a few messages/DMs from this iteration. No cleanup performed (consistent with prior iters).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter 6 added zero backend changes. New smoke file at /app/backend/tests/test_iter6_attachments_smoke.py covers attachment_id flow on both channel messages and DMs as well as basic image/video/pdf upload+stream. Full suite is 63 tests, ~5 min. Run: `pytest /app/backend/tests/ -v --tb=short`. The /api/files/{id} GET requires auth — frontend agent should be questioned on how it renders <img>/<video> tags with auth-protected endpoints (blob-fetch with Authorization header is the typical pattern).",
+  "rca of the issue": "No issues to RCA — backend is clean for iter 6 attachment scope."
+}

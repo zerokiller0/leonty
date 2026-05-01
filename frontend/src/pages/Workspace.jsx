@@ -11,7 +11,7 @@ import WatchTogether from "../components/WatchTogether";
 import {
   Heart, Plus, Hash, Settings as SettingsIcon, LogOut, Search, Send,
   Lock, MessageCircle, Copy, X, Smile, Trash2, ImagePlus, Phone, Video,
-  Film, Sticker as StickerIcon, Calendar,
+  Film, Sticker as StickerIcon, Calendar, Paperclip, Download, FileIcon, Image as ImageIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -149,6 +149,31 @@ export default function Workspace() {
         await api.post("/dms", { recipient_id: dmPartner.id, sender_ciphertext, recipient_ciphertext, attachment_id: fileId });
       }
     } catch (e) { toast.error(formatApiError(e)); }
+  };
+
+  const sendAttachment = async (file) => {
+    if (!file) return;
+    if (file.size > 100 * 1024 * 1024) { toast.error("الحد الأقصى ١٠٠ ميجا"); return; }
+    const toastId = toast.loading(`جاري رفع ${file.name}...`);
+    try {
+      const fd = new FormData(); fd.append("file", file);
+      const { data } = await api.post("/files/upload", fd);
+      const fid = data.file.id;
+      let prefix;
+      if (file.type.startsWith("image/")) prefix = "🖼️ صورة";
+      else if (file.type.startsWith("video/")) prefix = "🎬 فيديو";
+      else if (file.type.startsWith("audio/")) prefix = "🎵 صوت";
+      else prefix = `📎 ${file.name}`;
+      const content = `${prefix}|attachment:${fid}|type:${file.type || "application/octet-stream"}|name:${file.name}`;
+      if (channelId) {
+        await api.post(`/channels/${channelId}/messages`, { content, attachment_id: fid });
+      } else if (userId && dmPartner) {
+        const recipient_ciphertext = await encryptForPublicKey(content, dmPartner.public_key);
+        const sender_ciphertext = await encryptForPublicKey(content, user.public_key);
+        await api.post("/dms", { recipient_id: dmPartner.id, sender_ciphertext, recipient_ciphertext, attachment_id: fid });
+      }
+      toast.success("تم الإرسال", { id: toastId });
+    } catch (e) { toast.error(formatApiError(e), { id: toastId }); }
   };
 
   const sendSticker = async (sticker) => {
@@ -361,9 +386,23 @@ export default function Workspace() {
             const text = m.plaintext !== undefined ? m.plaintext : m.content;
             const cleanText = text?.split("|attachment:")[0] || "";
             const attachId = m.attachment_id;
-            const isAudio = attachId && (cleanText.includes("🎤") || cleanText.includes("صوتية"));
-            const cls = !isAudio ? classifyMessage(cleanText, emojiMap) : { kind: "text" };
+            // Parse metadata from content tail
+            const meta = {};
+            (text || "").split("|").forEach(part => {
+              const idx = part.indexOf(":");
+              if (idx > 0 && ["type", "name", "attachment"].includes(part.slice(0, idx))) {
+                meta[part.slice(0, idx)] = part.slice(idx + 1);
+              }
+            });
+            const fileType = meta.type || "";
+            const fileName = meta.name || "";
+            const isAudio = attachId && (cleanText.includes("🎤") || fileType.startsWith("audio/"));
+            const isImage = attachId && (cleanText.startsWith("🖼️") || fileType.startsWith("image/"));
+            const isVideo = attachId && (cleanText.startsWith("🎬") || fileType.startsWith("video/"));
+            const isFile = attachId && !isAudio && !isImage && !isVideo;
+            const cls = !attachId ? classifyMessage(cleanText, emojiMap) : { kind: "text" };
             const isBig = cls.kind === "big-emoji" || cls.kind === "big-emoji-unicode" || cls.kind === "sticker";
+            const fileUrl = attachId ? `${BASE}/api/files/${attachId}` : null;
             return (
               <div key={m.id} data-testid={`message-${m.id}`} className="animate-chat-in flex gap-3">
                 <Avatar user={senderUser} size={36} />
@@ -376,24 +415,34 @@ export default function Workspace() {
                   </div>
                   {isAudio ? (
                     <div className={`inline-block px-4 py-2.5 text-sm rounded-2xl ${isMe ? "gradient-rose text-white" : "bg-[var(--surface)] text-[var(--text)]"}`}>
-                      <div className="flex items-center gap-2">
-                        <span>🎤</span>
-                        <audio controls src={`${BASE}/api/files/${attachId}`} className="h-8 max-w-xs" />
-                      </div>
+                      <div className="flex items-center gap-2"><span>🎤</span><audio controls src={fileUrl} className="h-8 max-w-xs" /></div>
                     </div>
+                  ) : isImage ? (
+                    <a href={fileUrl} target="_blank" rel="noreferrer" className="block max-w-md">
+                      <img src={fileUrl} alt={fileName || "image"} className="max-h-80 rounded-2xl object-contain bg-black/20" />
+                    </a>
+                  ) : isVideo ? (
+                    <video src={fileUrl} controls className="max-w-md max-h-96 rounded-2xl bg-black" />
+                  ) : isFile ? (
+                    <a href={fileUrl} download={fileName} target="_blank" rel="noreferrer"
+                      className={`inline-flex items-center gap-3 px-4 py-3 rounded-2xl max-w-md ${isMe ? "gradient-rose text-white" : "bg-[var(--surface)]"} hover:opacity-90`}>
+                      <FileIcon size={18} />
+                      <div className="min-w-0">
+                        <div className="text-sm truncate">{fileName || "ملف"}</div>
+                        <div className="text-[10px] opacity-70">اضغط للتحميل</div>
+                      </div>
+                      <Download size={14} className="ms-auto" />
+                    </a>
                   ) : isBig ? (
                     <div className="py-1">
-                      {cls.kind === "big-emoji-unicode" && (
-                        <span className="text-6xl leading-none">{cls.text}</span>
-                      )}
+                      {cls.kind === "big-emoji-unicode" && (<span className="text-6xl leading-none">{cls.text}</span>)}
                       {(cls.kind === "big-emoji" || cls.kind === "sticker") && cls.emoji && (
-                        <img src={`${BASE}/api/emojis/${cls.emoji.id}/image`}
-                          alt={`:${cls.emoji.name}:`}
+                        <img src={`${BASE}/api/emojis/${cls.emoji.id}/image`} alt={`:${cls.emoji.name}:`}
                           className={cls.kind === "sticker" ? "h-40 w-40 object-contain" : "h-20 w-20 object-contain"} />
                       )}
                     </div>
                   ) : (
-                    <div className={`inline-block px-4 py-2.5 text-sm leading-relaxed max-w-2xl rounded-2xl ${
+                    <div className={`inline-block px-4 py-2.5 text-sm leading-relaxed max-w-2xl rounded-2xl break-words ${
                       isMe ? "gradient-rose text-white" : "bg-[var(--surface)] text-[var(--text)]"
                     }`}>
                       <MessageContent text={cleanText} />
@@ -442,6 +491,12 @@ export default function Workspace() {
               className="text-[var(--muted)] hover:text-[var(--accent)] p-2 transition-colors" title="ستيكر">
               <StickerIcon size={18} />
             </button>
+            <label className="text-[var(--muted)] hover:text-[var(--accent)] p-2 transition-colors cursor-pointer" title="مرفق">
+              <Paperclip size={18} />
+              <input type="file" hidden data-testid="attach-file-input"
+                accept="image/*,video/*,audio/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip"
+                onChange={(e) => { sendAttachment(e.target.files?.[0]); e.target.value = ""; }} />
+            </label>
             <VoiceRecorder onSent={sendVoiceMsg} isDM={!!userId} />
             <input ref={inputRef} data-testid="message-input" value={input} onChange={(e) => setInput(e.target.value)}
               placeholder={userId ? "رسالة مشفّرة..." : `أرسل في #${activeChannel?.name || ""}`}
