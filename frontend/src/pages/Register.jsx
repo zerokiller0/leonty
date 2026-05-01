@@ -107,7 +107,7 @@ export default function Register() {
             <div className="w-11 h-11 rounded-2xl gradient-rose flex items-center justify-center">
               <Heart size={18} className="text-white" fill="white" />
             </div>
-            <span className="font-display-en text-2xl">Cipher</span>
+            <span className="font-display-en text-2xl">Leonty</span>
           </Link>
           <h1 className="font-display text-3xl">أنشئ حسابك</h1>
           <p className="text-sm text-[var(--muted)] mt-2">المفاتيح ستُولّد في جهازك مباشرة</p>

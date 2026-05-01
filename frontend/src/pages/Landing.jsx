@@ -14,7 +14,7 @@ export default function Landing() {
             <div className="w-9 h-9 rounded-2xl gradient-rose flex items-center justify-center shadow-lg shadow-[var(--accent)]/20">
               <Heart size={16} className="text-white" fill="white" />
             </div>
-            <span className="font-display-en text-xl">Cipher</span>
+            <span className="font-display-en text-xl">Leonty</span>
           </Link>
           <div className="flex items-center gap-6">
             <a href="#features" className="text-sm text-[var(--muted)] hover:text-white transition-colors hidden sm:block">المميزات</a>
@@ -68,28 +68,13 @@ export default function Landing() {
           </div>
 
           <div className="lg:col-span-5">
-            <div className="relative glass-card p-6 space-y-3">
-              <div className="flex items-center justify-between pb-3 border-b border-[var(--border)]">
-                <span className="label-soft">قناة آمنة</span>
-                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[var(--accent)]/10">
-                  <Lock size={10} className="text-[var(--accent)]" />
-                  <span className="font-mono-key text-[10px] text-[var(--accent)]">ENCRYPTED</span>
+            <div className="relative glass-card p-10 flex items-center justify-center min-h-[420px]">
+              <div className="text-center space-y-6">
+                <Heart className="mx-auto text-[var(--accent)] heart-pulse" size={56} fill="currentColor" />
+                <div className="text-3xl sm:text-4xl font-display leading-relaxed text-gradient-rose">
+                  هذا الموقع<br/>سويته بس عشانك<br/>يا ليونتي
                 </div>
-              </div>
-              <div className="py-2">
-                <div className="text-xs text-[var(--muted-soft)] mb-1.5 ms-2">حبيبي · ١٤:٢٢</div>
-                <div className="inline-block bg-[var(--surface)] px-4 py-2.5 text-sm rounded-2xl">وحشتني اليوم 🌹</div>
-              </div>
-              <div className="py-2 text-left">
-                <div className="text-xs text-[var(--muted-soft)] mb-1.5 me-2">أنت · ١٤:٢٣</div>
-                <div className="inline-block gradient-rose text-white px-4 py-2.5 text-sm rounded-2xl text-right">وأنت أكثر ❤️</div>
-              </div>
-              <div className="py-2">
-                <div className="text-xs text-[var(--muted-soft)] mb-1.5 ms-2">حبيبي · ١٤:٢٣</div>
-                <div className="inline-block bg-[var(--surface)] px-4 py-2.5 rounded-2xl">
-                  <span className="font-mono-key text-[var(--accent)] text-xs">a3f9 c210 88bd ffe1</span>
-                </div>
-                <div className="text-[10px] text-[var(--muted-soft)] mt-1 ms-2">↑ بصمة المحادثة — موثوقة</div>
+                <div className="text-3xl">❤️🌹❤️</div>
               </div>
             </div>
           </div>
@@ -127,7 +112,7 @@ export default function Landing() {
               مفاتيحك. جهازك. <br/><span className="text-gradient-rose">سيرّك معك.</span>
             </h2>
             <p className="text-[var(--muted)] leading-relaxed text-base">
-              عند التسجيل، يولّد Cipher زوج مفاتيح RSA-2048 داخل متصفحك.
+              عند التسجيل، يولّد Leonty زوج مفاتيح RSA-2048 داخل متصفحك.
               مفتاحك الخاص يُشفّر بمفتاح AES-256 مشتقّ من كلمة مرورك (PBKDF2 بـ ٢٠٠ ألف دورة)
               قبل أن يغادر جهازك. السيرفر يحتفظ بالشيفرة فقط — لو أردنا قراءة رسائلك،
               لا نستطيع. هذا وعد رياضي، ليس فقط سياسة خصوصية.
@@ -164,7 +149,7 @@ export default function Landing() {
 
       <footer className="relative z-10 border-t border-[var(--border)]">
         <div className="max-w-7xl mx-auto px-6 py-8 flex items-center justify-between text-xs text-[var(--muted-soft)]">
-          <span className="font-mono-key">CIPHER © 2026 · مشفّر بالكامل</span>
+          <span className="font-mono-key">LEONTY © 2026 · مشفّر بالكامل</span>
           <span>صُمِّم بحب 🌹</span>
         </div>
       </footer>
@@ -184,7 +169,7 @@ const features = [
 const specs = [
   { label: "ENCRYPTION", value: "RSA-OAEP 2048" },
   { label: "KEY DERIVATION", value: "PBKDF2 200K" },
-  { label: "HYBRID CIPHER", value: "AES-GCM-256" },
+  { label: "HYBRID LEONTY", value: "AES-GCM-256" },
   { label: "AUTH", value: "JWT · HttpOnly" },
   { label: "2FA", value: "TOTP RFC 6238" },
   { label: "TRANSPORT", value: "TLS 1.3" },

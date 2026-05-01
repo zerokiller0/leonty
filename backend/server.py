@@ -36,7 +36,7 @@ JWT_ALGORITHM = "HS256"
 ACCESS_MIN = 60 * 8  # 8h so chatting session isn't cut
 REFRESH_DAYS = 7
 
-app = FastAPI(title="Cipher Secure Messenger")
+app = FastAPI(title="Leonty Secure Messenger")
 api = APIRouter(prefix="/api")
 
 # ---------- Helpers ----------
@@ -84,6 +84,8 @@ def public_user(u: dict) -> dict:
         "username": u.get("username"),
         "display_name": u.get("display_name"),
         "avatar_url": u.get("avatar_url"),
+        "about_me": u.get("about_me", ""),
+        "status": u.get("status", "online"),
         "public_key": u.get("public_key"),
         "two_factor_enabled": bool(u.get("two_factor_secret")),
         "is_guest": bool(u.get("is_guest", False)),
@@ -132,6 +134,8 @@ class TwoFAVerifyIn(BaseModel):
 class UpdateProfileIn(BaseModel):
     display_name: Optional[str] = None
     avatar_url: Optional[str] = None
+    about_me: Optional[str] = None
+    status: Optional[str] = None  # online | idle | dnd | invisible | custom text
 
 class ServerCreateIn(BaseModel):
     name: str
@@ -334,7 +338,7 @@ async def twofa_setup(user: dict = Depends(get_current_user)):
     secret = pyotp.random_base32()
     # store pending
     await db.users.update_one({"id": user["id"]}, {"$set": {"two_factor_pending": secret}})
-    uri = pyotp.TOTP(secret).provisioning_uri(name=user["email"], issuer_name="Cipher")
+    uri = pyotp.TOTP(secret).provisioning_uri(name=user["email"], issuer_name="Leonty")
     # generate QR
     img = qrcode.make(uri)
     buf = BytesIO()
@@ -585,19 +589,33 @@ async def list_conversations(user: dict = Depends(get_current_user)):
     return {"conversations": convs}
 
 # ---------- Files ----------
+MAX_UPLOAD_SIZE = 2 * 1024 * 1024 * 1024  # 2 GB
+
 @api.post("/files/upload")
 async def upload_file(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
     fid = str(uuid.uuid4())
     path = UPLOAD_DIR / fid
-    content = await file.read()
+    total = 0
     with open(path, "wb") as f:
-        f.write(content)
+        while True:
+            chunk = await file.read(4 * 1024 * 1024)  # 4MB chunks
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_UPLOAD_SIZE:
+                f.close()
+                try:
+                    path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                raise HTTPException(413, "الملف يتجاوز ٢ جيجا")
+            f.write(chunk)
     record = {
         "id": fid,
         "uploader_id": user["id"],
         "filename": file.filename,
         "content_type": file.content_type or "application/octet-stream",
-        "size": len(content),
+        "size": total,
         "created_at": now_utc().isoformat(),
     }
     await db.files.insert_one(record)
@@ -734,7 +752,7 @@ async def get_signals(user: dict = Depends(get_current_user)):
 # ---------- Health ----------
 @api.get("/")
 async def root():
-    return {"app": "Cipher", "status": "ok"}
+    return {"app": "Leonty", "status": "ok"}
 
 app.include_router(api)
 

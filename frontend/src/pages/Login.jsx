@@ -51,7 +51,7 @@ export default function Login() {
             <div className="w-11 h-11 rounded-2xl gradient-rose flex items-center justify-center shadow-lg shadow-[var(--accent)]/20">
               <Heart size={18} className="text-white" fill="white" />
             </div>
-            <span className="font-display-en text-2xl">Cipher</span>
+            <span className="font-display-en text-2xl">Leonty</span>
           </Link>
           <h1 className="font-display text-3xl">أهلاً بعودتك</h1>
           <p className="text-sm text-[var(--muted)] mt-2">سجّل دخول لمساحتك المشفّرة</p>
@@ -100,7 +100,7 @@ export default function Login() {
             </button>
             <div className="text-center pt-2">
               <Link to="/register" data-testid="goto-register" className="text-xs text-[var(--muted)] hover:text-[var(--accent)]">
-                جديد على Cipher؟ أنشئ حساباً ←
+                جديد على Leonty؟ أنشئ حساباً ←
               </Link>
             </div>
           </form>

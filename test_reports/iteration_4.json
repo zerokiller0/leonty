@@ -1,0 +1,44 @@
+{
+  "summary": "Leonty iteration 4 backend testing. 8/14 new iter-4 tests PASSED + all 40/40 iter 1-3 regression tests still PASS. The 6 iter-4 failures all stem from one missing implementation: upload_emoji in /app/backend/server.py (lines 647-675) does NOT implement the `kind` query parameter at all. As a result: (a) `kind` is never persisted on the emoji record, (b) `kind=invalid` is not rejected (returns 200), (c) the sticker 1MB size limit is not honored — all uploads use the unconditional 512KB cap, (d) list endpoints return records without a kind field. Profile fields (about_me, status), GET /api/users/{id}, PATCH /api/users/me, /api/files/upload chunked (5MB video round-trip) and GET /api/ {app:'Leonty'} all PASS.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/servers/{server_id}/emojis", "issue": "Endpoint does not accept the `kind` query parameter required by iter-4 spec. Signature is `upload_emoji(server_id: str, name: str, file: UploadFile = File(...))` (server.py L648). The `kind` value is silently dropped, never validated, never persisted on the record, and per-kind size limits are not enforced. Currently every upload is treated as kind=emoji with hard-coded 512KB limit. Spec requires: kind in {sticker, emoji}, sticker ≤1MB, emoji ≤512KB, invalid kind → 400, persisted on record, returned in list endpoints.", "priority": "CRITICAL"}
+    ],
+    "minor": [
+      {"endpoint": "GET /api/servers/{id}/emojis & GET /api/emojis", "issue": "Once `kind` is added to the upload path, list endpoints will need to default missing kind to 'emoji' for legacy records (per agent_to_agent_context_note). Currently the field is simply absent from responses."},
+      {"endpoint": "POST /api/files/upload", "issue": "OK but: HTTPException(413) raised AFTER `with open(path, 'wb')` block — `f.close()` is called manually before `raise`, but file handle is still open in the `with` context (double-close on context exit). Cosmetic, not a bug, since unlink succeeds. Consider moving the size check before the write, or break out of the loop and raise after the with-block."},
+      {"endpoint": "POST /api/files/upload", "issue": "No per-user/global rate limit. A single client could upload many 2GB files."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter4_leonty.py",
+    "/app/backend/tests/test_cipher_backend.py",
+    "/app/backend/tests/test_guest_and_emojis.py",
+    "/app/backend/tests/test_calls_signaling.py",
+    "/app/test_reports/pytest/pytest_iter4.xml",
+    "/app/test_reports/pytest/pytest_iter4_regression.xml"
+  ],
+  "action_items": [
+    "CRITICAL — Implement `kind` support on POST /api/servers/{server_id}/emojis. Concrete patch: change signature to `async def upload_emoji(server_id: str, name: str, kind: str = 'emoji', file: UploadFile = File(...), user: dict = Depends(get_current_user))`. Add: `if kind not in ('emoji','sticker'): raise HTTPException(400, 'Invalid kind')`. Replace size check with `limit = 1024*1024 if kind == 'sticker' else 512*1024; if len(content) > limit: raise HTTPException(400, f'{kind} must be under {limit//1024}KB')`. Add `'kind': kind` to the persisted `rec` dict. (server.py lines 647-675)",
+    "Add `kind` defaulting in list responses: in /servers/{id}/emojis and /emojis, do `e.setdefault('kind','emoji')` for legacy records lacking the field, so frontend can rely on its presence.",
+    "Optional cleanup: server.py is now 811 lines — same router-split recommendation from iter 3 still stands."
+  ],
+  "critical_code_review_comments": [
+    "BLOCKING: upload_emoji in server.py L647-675 is missing the `kind` query parameter entirely — the iter-4 spec was not implemented even though Models/UpdateProfileIn/public_user changes are in place. The agent_to_agent_context_note says 'upload_emoji takes kind query param' but the code does not match. This is the only iter-4 backend gap.",
+    "public_user(L80-93) correctly defaults missing about_me to '' and status to 'online' — verified by test for a fresh user.",
+    "PATCH /api/users/me with empty body works via `{k:v for k,v in body.model_dump().items() if v is not None}` filter — no-op preserves prior values. Verified.",
+    "Chunked upload with 4MB read loop and 2GB total cap is correctly implemented (server.py L595-623). 5MB binary round-trip verified byte-equal.",
+    "GET /api/ returns {'app':'Leonty','status':'ok'} — verified.",
+    "MongoDB _id is excluded everywhere (find_one/find with {'_id':0} projection or rec.pop('_id', None)) — no ObjectId leakage seen in any response in tests.",
+    "Hardcoded HTTPException Arabic message at L611 ('الملف يتجاوز ٢ جيجا'). Inconsistent with English error strings elsewhere; consider centralizing user-facing strings or i18n."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter4_leonty.py"],
+  "success_rate": {"backend": "78.6% iter-4 (8/14 new) + 100% regression (40/40). Combined 48/54 = 88.9%.", "frontend": "not tested (backend-only)"},
+  "test_credentials": "Admin admin@cipher.io / Admin@Cipher2026 not used. All tests register their own TEST_i4_* users via /api/auth/register.",
+  "seed_data_creation": "~14 TEST_i4_* users + ~10 TEST_i4_Srv_* servers + ~10 emoji/sticker uploads. No data cleanup performed (mirrors prior iterations' approach).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run: `pytest /app/backend/tests/ -v --tb=short` — 54 tests, ~3 min. After main agent fixes upload_emoji to accept `kind` query param and applies per-kind size limits + persists kind on the record, the 6 currently-failing tests in test_iter4_leonty.py will pass. Specifically watch test_sticker_900kb_succeeds (proves 1MB cap for stickers), test_upload_invalid_kind_400 (validation), test_list_server_emojis_includes_kind & test_list_my_emojis_includes_kind (response shape). Previous iterations' tests are stable — no regressions.",
+  "rca of the issue": "Root cause: server.py L647-675 (upload_emoji handler) was not updated to accept `kind` per iter-4 spec. The Models layer (UpdateProfileIn, public_user with about_me/status) and /api/files/upload chunking were updated correctly, but the emoji handler change was skipped. Reproduction: `curl -F file=@x.png 'https://team-secure.preview.emergentagent.com/api/servers/{id}/emojis?name=foo&kind=sticker' -H 'Authorization: Bearer ...'` → response is 200 with `{emoji:{...no kind field...}}`, and a 900KB sticker is rejected with 400 'Emoji must be under 512KB'. Mitigation: implement the patch in action_items[0]."
+}

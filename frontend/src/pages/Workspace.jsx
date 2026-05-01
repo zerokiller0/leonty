@@ -4,12 +4,14 @@ import { useAuth } from "../contexts/AuthContext";
 import api, { formatApiError } from "../lib/api";
 import { encryptForPublicKey, decryptWithPrivateKey, fingerprint } from "../lib/crypto";
 import { EmojiButton } from "../components/EmojiPicker";
-import MessageContent, { refreshEmojiCache } from "../components/MessageContent";
+import MessageContent, { refreshEmojiCache, classifyMessage, useEmojiMap } from "../components/MessageContent";
 import VoiceRecorder from "../components/VoiceRecorder";
 import VoiceCall from "../components/VoiceCall";
+import WatchTogether from "../components/WatchTogether";
 import {
   Heart, Plus, Hash, Settings as SettingsIcon, LogOut, Search, Send,
   Lock, MessageCircle, Copy, X, Smile, Trash2, ImagePlus, Phone, Video,
+  Film, Sticker as StickerIcon, Calendar,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -31,11 +33,16 @@ export default function Workspace() {
   const [showChannelModal, setShowChannelModal] = useState(false);
   const [showDmSearch, setShowDmSearch] = useState(false);
   const [showEmojiManager, setShowEmojiManager] = useState(false);
+  const [showStickerPicker, setShowStickerPicker] = useState(false);
+  const [showPlusMenu, setShowPlusMenu] = useState(false);
   const [callPartner, setCallPartner] = useState(null);
   const [incomingCall, setIncomingCall] = useState(null);
+  const [watchPartner, setWatchPartner] = useState(null);
+  const [incomingWatch, setIncomingWatch] = useState(null);
   const [fingerp, setFingerp] = useState("");
   const scrollRef = useRef(null);
   const inputRef = useRef(null);
+  const emojiMap = useEmojiMap();
 
   const loadSidebar = async () => {
     const [s, d] = await Promise.all([api.get("/servers"), api.get("/dms")]);
@@ -53,8 +60,7 @@ export default function Workspace() {
     (async () => {
       try {
         const { data } = await api.get(`/servers/${serverId}`);
-        setActiveServer(data.server);
-        setMembers(data.members);
+        setActiveServer(data.server); setMembers(data.members);
         const ch = await api.get(`/servers/${serverId}/channels`);
         setChannels(ch.data.channels);
         if (!channelId && ch.data.channels[0]) {
@@ -66,10 +72,7 @@ export default function Workspace() {
 
   useEffect(() => {
     if (!userId) { setDmPartner(null); return; }
-    (async () => {
-      const { data } = await api.get(`/users/${userId}`);
-      setDmPartner(data.user);
-    })();
+    (async () => { const { data } = await api.get(`/users/${userId}`); setDmPartner(data.user); })();
   }, [userId]);
 
   useEffect(() => {
@@ -101,30 +104,23 @@ export default function Workspace() {
     return () => { cancelled = true; clearInterval(t); };
   }, [channelId, userId, privateKeyB64, user?.id]);
 
-  // Poll for incoming calls
+  // Poll for incoming calls + watch invites
   useEffect(() => {
-    if (callPartner) return;  // already in call view; that handles signals
+    if (callPartner || watchPartner) return;
     const poll = async () => {
       try {
         const { data } = await api.get("/calls/signals");
         const offer = data.signals.find(s => s.type === "offer");
-        if (offer) {
-          setIncomingCall({
-            partner: offer.from_user,
-            callId: offer.call_id,
-            offer: offer.payload,
-          });
-        }
+        if (offer) setIncomingCall({ partner: offer.from_user, callId: offer.call_id, offer: offer.payload });
+        const watchInvite = data.signals.find(s => s.type === "watch_invite");
+        if (watchInvite) setIncomingWatch({ partner: watchInvite.from_user, ...watchInvite.payload });
       } catch {}
     };
-    const t = setInterval(poll, 2500);
-    poll();
+    const t = setInterval(poll, 2500); poll();
     return () => clearInterval(t);
-  }, [callPartner]);
+  }, [callPartner, watchPartner]);
 
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [messages]);
+  useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }); }, [messages]);
 
   const send = async (e) => {
     e.preventDefault();
@@ -133,7 +129,7 @@ export default function Workspace() {
       if (channelId) {
         await api.post(`/channels/${channelId}/messages`, { content: input });
       } else if (userId && dmPartner) {
-        if (!privateKeyB64) { toast.error("لا يوجد مفتاح خاص — أعد تسجيل الدخول"); return; }
+        if (!privateKeyB64) { toast.error("لا يوجد مفتاح خاص"); return; }
         const recipient_ciphertext = await encryptForPublicKey(input, dmPartner.public_key);
         const sender_ciphertext = await encryptForPublicKey(input, user.public_key);
         await api.post("/dms", { recipient_id: dmPartner.id, sender_ciphertext, recipient_ciphertext });
@@ -155,6 +151,20 @@ export default function Workspace() {
     } catch (e) { toast.error(formatApiError(e)); }
   };
 
+  const sendSticker = async (sticker) => {
+    const text = `:${sticker.name}:`;
+    try {
+      if (channelId) {
+        await api.post(`/channels/${channelId}/messages`, { content: text });
+      } else if (userId && dmPartner) {
+        const recipient_ciphertext = await encryptForPublicKey(text, dmPartner.public_key);
+        const sender_ciphertext = await encryptForPublicKey(text, user.public_key);
+        await api.post("/dms", { recipient_id: dmPartner.id, sender_ciphertext, recipient_ciphertext });
+      }
+      setShowStickerPicker(false);
+    } catch (e) { toast.error(formatApiError(e)); }
+  };
+
   const insertAtCursor = (text) => {
     const el = inputRef.current;
     if (!el) { setInput(input + text); return; }
@@ -167,28 +177,22 @@ export default function Workspace() {
   const createServer = async (name) => {
     try {
       const { data } = await api.post("/servers", { name });
-      await loadSidebar();
-      nav(`/app/${data.server.id}`);
-      setShowServerModal(false);
+      await loadSidebar(); nav(`/app/${data.server.id}`); setShowServerModal(false);
       toast.success("تم إنشاء السيرفر");
     } catch (e) { toast.error(formatApiError(e)); }
   };
   const joinServer = async (code) => {
     try {
       const { data } = await api.post("/servers/join", { invite_code: code });
-      await loadSidebar();
-      nav(`/app/${data.server.id}`);
-      setShowServerModal(false);
-      toast.success("تم الانضمام");
-      refreshEmojiCache();
+      await loadSidebar(); nav(`/app/${data.server.id}`); setShowServerModal(false);
+      toast.success("تم الانضمام"); refreshEmojiCache();
     } catch (e) { toast.error(formatApiError(e)); }
   };
   const createChannel = async (name) => {
     try {
       const { data } = await api.post(`/servers/${serverId}/channels`, { name });
       setChannels([...channels, data.channel]);
-      nav(`/app/${serverId}/${data.channel.id}`);
-      setShowChannelModal(false);
+      nav(`/app/${serverId}/${data.channel.id}`); setShowChannelModal(false);
     } catch (e) { toast.error(formatApiError(e)); }
   };
 
@@ -196,7 +200,7 @@ export default function Workspace() {
 
   return (
     <div dir="ltr" className="h-screen w-screen flex overflow-hidden text-[var(--text)]">
-      {/* Servers sidebar (LEFT in any direction) */}
+      {/* Servers sidebar (LEFT) */}
       <aside dir="rtl" className="w-[80px] bg-[var(--bg-soft)] border-r border-[var(--border)] flex flex-col items-center py-4 gap-3 shrink-0">
         <Link to="/app" data-testid="home-btn" className="w-12 h-12 rounded-2xl gradient-rose flex items-center justify-center hover:rounded-3xl transition-all duration-200 shadow-lg shadow-[var(--accent)]/20">
           <Heart size={18} className="text-white" fill="white" />
@@ -213,8 +217,7 @@ export default function Workspace() {
               {s.name.slice(0, 2).toUpperCase()}
             </button>
           ))}
-          <button data-testid="add-server-btn" onClick={() => setShowServerModal(true)}
-            title="إنشاء أو الانضمام لسيرفر"
+          <button data-testid="add-server-btn" onClick={() => setShowServerModal(true)} title="إنشاء أو انضمام"
             className="w-12 h-12 rounded-full bg-[var(--surface)] hover:bg-[var(--accent)]/20 hover:text-[var(--accent)] text-[var(--accent)] flex items-center justify-center transition-all duration-200 border border-dashed border-[var(--accent)]/40 hover:border-solid">
             <Plus size={18} />
           </button>
@@ -245,7 +248,7 @@ export default function Workspace() {
             )}
           </div>
           {activeServer && (
-            <button data-testid="manage-emojis-btn" onClick={() => setShowEmojiManager(true)} title="إدارة الإيموجي"
+            <button data-testid="manage-emojis-btn" onClick={() => setShowEmojiManager(true)} title="إدارة الإيموجي والستيكر"
               className="text-[var(--muted)] hover:text-[var(--accent)] transition-colors p-1.5 rounded-full hover:bg-white/5">
               <Smile size={16} />
             </button>
@@ -285,9 +288,7 @@ export default function Workspace() {
                   className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm rounded-2xl transition-colors ${
                     c.partner.id === userId ? "bg-[var(--accent)]/15 text-white" : "text-[var(--muted)] hover:text-white hover:bg-white/5"
                   }`}>
-                  <div className="w-8 h-8 rounded-full gradient-rose flex items-center justify-center text-[11px] text-white font-display">
-                    {c.partner.display_name?.[0]?.toUpperCase() || "?"}
-                  </div>
+                  <Avatar user={c.partner} size={32} />
                   <span className="truncate">{c.partner.display_name}</span>
                   <Lock size={10} className="ms-auto text-[var(--accent)]" />
                 </button>
@@ -300,15 +301,13 @@ export default function Workspace() {
         </div>
 
         <div className="p-3 border-t border-[var(--border)] flex items-center gap-3">
-          <div className="w-9 h-9 rounded-full gradient-rose flex items-center justify-center text-xs font-display text-white">
-            {user?.display_name?.[0]?.toUpperCase()}
-          </div>
+          <Avatar user={user} size={36} />
           <div className="min-w-0 flex-1">
             <div className="text-xs truncate flex items-center gap-1.5">
               {user?.display_name}
               {user?.is_guest && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-[var(--accent)]/20 text-[var(--accent)]">ضيف</span>}
             </div>
-            <div className="font-mono-key text-[9px] text-[var(--muted-soft)] truncate">{fingerp}</div>
+            <div className="text-[10px] text-[var(--muted-soft)] truncate">{user?.status || "online"}</div>
           </div>
         </div>
       </aside>
@@ -325,9 +324,7 @@ export default function Workspace() {
               </>
             ) : dmPartner ? (
               <>
-                <div className="w-9 h-9 rounded-full gradient-rose flex items-center justify-center text-xs text-white font-display">
-                  {dmPartner.display_name?.[0]?.toUpperCase()}
-                </div>
+                <Avatar user={dmPartner} size={36} />
                 <span className="font-display">{dmPartner.display_name}</span>
                 <div className="flex items-center gap-1 ms-2 px-2.5 py-1 rounded-full bg-[var(--accent)]/10 border border-[var(--accent)]/20">
                   <Lock size={10} className="text-[var(--accent)]" />
@@ -340,6 +337,10 @@ export default function Workspace() {
           </div>
           {dmPartner && (
             <div className="flex items-center gap-2">
+              <button data-testid="watch-together-btn" onClick={() => setWatchPartner(dmPartner)}
+                title="مشاهدة معاً" className="w-10 h-10 rounded-full bg-[var(--surface)] hover:bg-[var(--accent)]/20 hover:text-[var(--accent)] flex items-center justify-center transition">
+                <Film size={15} />
+              </button>
               <button data-testid="call-audio-btn" onClick={() => setCallPartner(dmPartner)}
                 title="اتصال صوتي" className="w-10 h-10 rounded-full bg-[var(--surface)] hover:bg-[var(--accent)]/20 hover:text-[var(--accent)] flex items-center justify-center transition">
                 <Phone size={15} />
@@ -356,31 +357,47 @@ export default function Workspace() {
           {messages.map((m) => {
             const isMe = m.sender_id === user.id;
             const senderName = m.sender?.display_name || (isMe ? user.display_name : dmPartner?.display_name || "غير معروف");
+            const senderUser = m.sender || (isMe ? user : dmPartner);
             const text = m.plaintext !== undefined ? m.plaintext : m.content;
             const cleanText = text?.split("|attachment:")[0] || "";
             const attachId = m.attachment_id;
             const isAudio = attachId && (cleanText.includes("🎤") || cleanText.includes("صوتية"));
+            const cls = !isAudio ? classifyMessage(cleanText, emojiMap) : { kind: "text" };
+            const isBig = cls.kind === "big-emoji" || cls.kind === "big-emoji-unicode" || cls.kind === "sticker";
             return (
-              <div key={m.id} data-testid={`message-${m.id}`} className="animate-chat-in">
-                <div className="flex items-baseline gap-2 mb-1">
-                  <div className={`w-7 h-7 rounded-full gradient-rose flex items-center justify-center text-[10px] text-white font-display`}>
-                    {senderName?.[0]?.toUpperCase()}
+              <div key={m.id} data-testid={`message-${m.id}`} className="animate-chat-in flex gap-3">
+                <Avatar user={senderUser} size={36} />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-baseline gap-2 mb-1">
+                    <span className="text-sm font-medium">{senderName}</span>
+                    <span className="font-mono-key text-[10px] text-[var(--muted-soft)]">
+                      {new Date(m.created_at).toLocaleString("ar")}
+                    </span>
                   </div>
-                  <span className="text-sm font-medium">{senderName}</span>
-                  <span className="font-mono-key text-[10px] text-[var(--muted-soft)]">
-                    {new Date(m.created_at).toLocaleString("ar")}
-                  </span>
-                </div>
-                <div className={`inline-block px-4 py-2.5 text-sm leading-relaxed max-w-2xl rounded-2xl ms-9 ${
-                  isMe ? "gradient-rose text-white" : "bg-[var(--surface)] text-[var(--text)]"
-                }`}>
                   {isAudio ? (
-                    <div className="flex items-center gap-2">
-                      <span>🎤</span>
-                      <audio controls src={`${BASE}/api/files/${attachId}`} className="h-8 max-w-xs" />
+                    <div className={`inline-block px-4 py-2.5 text-sm rounded-2xl ${isMe ? "gradient-rose text-white" : "bg-[var(--surface)] text-[var(--text)]"}`}>
+                      <div className="flex items-center gap-2">
+                        <span>🎤</span>
+                        <audio controls src={`${BASE}/api/files/${attachId}`} className="h-8 max-w-xs" />
+                      </div>
+                    </div>
+                  ) : isBig ? (
+                    <div className="py-1">
+                      {cls.kind === "big-emoji-unicode" && (
+                        <span className="text-6xl leading-none">{cls.text}</span>
+                      )}
+                      {(cls.kind === "big-emoji" || cls.kind === "sticker") && cls.emoji && (
+                        <img src={`${BASE}/api/emojis/${cls.emoji.id}/image`}
+                          alt={`:${cls.emoji.name}:`}
+                          className={cls.kind === "sticker" ? "h-40 w-40 object-contain" : "h-20 w-20 object-contain"} />
+                      )}
                     </div>
                   ) : (
-                    <MessageContent text={cleanText} />
+                    <div className={`inline-block px-4 py-2.5 text-sm leading-relaxed max-w-2xl rounded-2xl ${
+                      isMe ? "gradient-rose text-white" : "bg-[var(--surface)] text-[var(--text)]"
+                    }`}>
+                      <MessageContent text={cleanText} />
+                    </div>
                   )}
                 </div>
               </div>
@@ -396,7 +413,35 @@ export default function Workspace() {
 
         {(channelId || userId) && (
           <form onSubmit={send} className="p-4 border-t border-[var(--border)] flex items-center gap-2 shrink-0 relative">
+            {/* Plus menu */}
+            <div className="relative">
+              <button type="button" data-testid="plus-menu-btn" onClick={() => setShowPlusMenu(!showPlusMenu)}
+                className="text-[var(--muted)] hover:text-[var(--accent)] p-2 transition-colors" title="ميزات">
+                <Plus size={18} />
+              </button>
+              {showPlusMenu && (
+                <div className="absolute bottom-full mb-3 right-0 w-56 bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-2xl py-2 z-50">
+                  {userId && dmPartner ? (
+                    <button data-testid="menu-watch" onClick={() => { setWatchPartner(dmPartner); setShowPlusMenu(false); }}
+                      className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-white/5 text-right">
+                      <Film size={15} className="text-[var(--accent)]" />
+                      <div className="min-w-0">
+                        <div className="text-sm">المشاهدة معاً</div>
+                        <div className="text-[10px] text-[var(--muted-soft)]">شاهدوا فيديو متزامن</div>
+                      </div>
+                    </button>
+                  ) : (
+                    <div className="px-4 py-2.5 text-xs text-[var(--muted-soft)]">المشاهدة معاً متاحة في المحادثات الخاصة فقط</div>
+                  )}
+                </div>
+              )}
+            </div>
+
             <EmojiButton onPick={(p) => insertAtCursor(p.value)} />
+            <button type="button" data-testid="sticker-btn" onClick={() => setShowStickerPicker(true)}
+              className="text-[var(--muted)] hover:text-[var(--accent)] p-2 transition-colors" title="ستيكر">
+              <StickerIcon size={18} />
+            </button>
             <VoiceRecorder onSent={sendVoiceMsg} isDM={!!userId} />
             <input ref={inputRef} data-testid="message-input" value={input} onChange={(e) => setInput(e.target.value)}
               placeholder={userId ? "رسالة مشفّرة..." : `أرسل في #${activeChannel?.name || ""}`}
@@ -409,16 +454,14 @@ export default function Workspace() {
         )}
       </main>
 
-      {/* Members */}
-      {activeServer && (
-        <aside dir="rtl" className="w-[240px] bg-[var(--bg-soft)] border-l border-[var(--border)] p-4 shrink-0 hidden lg:block">
+      {/* Right panel: Members (server) OR Profile (DM) */}
+      {activeServer ? (
+        <aside dir="rtl" className="w-[280px] bg-[var(--bg-soft)] border-l border-[var(--border)] p-4 shrink-0 hidden lg:block overflow-y-auto">
           <div className="label-soft mb-4">الأعضاء · {members.length}</div>
           <div className="space-y-2">
             {members.map((m) => (
               <div key={m.id} className="flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 transition group">
-                <div className="w-8 h-8 rounded-full gradient-rose flex items-center justify-center text-[10px] text-white font-display">
-                  {m.display_name?.[0]?.toUpperCase()}
-                </div>
+                <Avatar user={m} size={32} />
                 <div className="min-w-0 flex-1">
                   <div className="text-xs truncate">{m.display_name}</div>
                   <div className="font-mono-key text-[9px] text-[var(--muted-soft)] truncate">@{m.username}</div>
@@ -433,7 +476,11 @@ export default function Workspace() {
             ))}
           </div>
         </aside>
-      )}
+      ) : dmPartner ? (
+        <aside dir="rtl" className="w-[320px] bg-[var(--bg-soft)] border-l border-[var(--border)] shrink-0 hidden lg:block overflow-y-auto">
+          <ProfileCard user={dmPartner} />
+        </aside>
+      ) : null}
 
       {showServerModal && <ServerModal onClose={() => setShowServerModal(false)} onCreate={createServer} onJoin={joinServer} />}
       {showChannelModal && <ChannelModal onClose={() => setShowChannelModal(false)} onCreate={createChannel} />}
@@ -442,6 +489,9 @@ export default function Workspace() {
         <EmojiManagerModal serverId={activeServer.id} serverName={activeServer.name}
           onClose={() => { setShowEmojiManager(false); refreshEmojiCache(); }} />
       )}
+      {showStickerPicker && (
+        <StickerPickerModal onClose={() => setShowStickerPicker(false)} onPick={sendSticker} />
+      )}
       {callPartner && (
         <VoiceCall partner={callPartner} me={user}
           incomingCallId={incomingCall && callPartner.id === incomingCall.partner.id ? incomingCall.callId : null}
@@ -449,10 +499,71 @@ export default function Workspace() {
           onClose={() => { setCallPartner(null); setIncomingCall(null); }} />
       )}
       {incomingCall && !callPartner && (
-        <IncomingCallToast call={incomingCall}
-          onAccept={() => { setCallPartner(incomingCall.partner); }}
-          onReject={() => setIncomingCall(null)} />
+        <IncomingToast call={incomingCall} onAccept={() => setCallPartner(incomingCall.partner)}
+          onReject={() => setIncomingCall(null)} icon={<Phone size={14} />} label="مكالمة واردة" />
       )}
+      {watchPartner && (
+        <WatchTogether partner={watchPartner} me={user}
+          incomingInvite={incomingWatch && watchPartner.id === incomingWatch.partner.id ? incomingWatch : null}
+          onClose={() => { setWatchPartner(null); setIncomingWatch(null); }} />
+      )}
+      {incomingWatch && !watchPartner && (
+        <IncomingToast call={{ partner: incomingWatch.partner }}
+          onAccept={() => setWatchPartner(incomingWatch.partner)}
+          onReject={() => setIncomingWatch(null)} icon={<Film size={14} />} label="دعوة مشاهدة" />
+      )}
+    </div>
+  );
+}
+
+function Avatar({ user, size = 36 }) {
+  const cls = `rounded-full overflow-hidden flex items-center justify-center text-white font-display shrink-0`;
+  const style = { width: size, height: size, fontSize: Math.max(10, Math.floor(size / 2.6)) };
+  if (user?.avatar_url) {
+    return <div className={cls} style={style}><img src={user.avatar_url} alt={user.display_name} className="w-full h-full object-cover" /></div>;
+  }
+  return <div className={`${cls} gradient-rose`} style={style}>{user?.display_name?.[0]?.toUpperCase() || "?"}</div>;
+}
+
+function ProfileCard({ user }) {
+  return (
+    <div className="flex flex-col">
+      <div className="h-24 gradient-rose" />
+      <div className="px-5 -mt-12">
+        <div className="rounded-full border-4 border-[var(--bg-soft)] inline-block">
+          <Avatar user={user} size={88} />
+        </div>
+        <div className="mt-3">
+          <div className="font-display text-lg flex items-center gap-2">
+            {user.display_name}
+            {user.is_guest && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-[var(--accent)]/20 text-[var(--accent)]">ضيف</span>}
+          </div>
+          <div className="text-xs text-[var(--muted)] font-mono-key">@{user.username}</div>
+        </div>
+      </div>
+      <div className="p-5 space-y-4">
+        {user.status && (
+          <div>
+            <div className="label-soft mb-1.5">الحالة</div>
+            <div className="text-sm">{user.status}</div>
+          </div>
+        )}
+        {user.about_me && (
+          <div>
+            <div className="label-soft mb-1.5">نبذة</div>
+            <div className="text-sm leading-relaxed whitespace-pre-wrap">{user.about_me}</div>
+          </div>
+        )}
+        {user.public_key && (
+          <div>
+            <div className="label-soft mb-1.5">بصمة المفتاح</div>
+            <code className="block font-mono-key text-[10px] text-[var(--accent)] break-all">{user.public_key.slice(40, 80)}</code>
+          </div>
+        )}
+        <div className="text-[10px] text-[var(--muted-soft)]">
+          عضو منذ {user.created_at ? new Date(user.created_at).toLocaleDateString("ar") : ""}
+        </div>
+      </div>
     </div>
   );
 }
@@ -475,8 +586,7 @@ function ModalShell({ title, children, onClose, wide = false }) {
 
 function ServerModal({ onClose, onCreate, onJoin }) {
   const [mode, setMode] = useState("create");
-  const [name, setName] = useState("");
-  const [code, setCode] = useState("");
+  const [name, setName] = useState(""); const [code, setCode] = useState("");
   return (
     <ModalShell title="السيرفر" onClose={onClose}>
       <div className="flex gap-2 mb-5">
@@ -518,8 +628,7 @@ function ChannelModal({ onClose, onCreate }) {
 }
 
 function DmSearchModal({ onClose, onPick }) {
-  const [q, setQ] = useState("");
-  const [results, setResults] = useState([]);
+  const [q, setQ] = useState(""); const [results, setResults] = useState([]);
   useEffect(() => {
     if (!q) { setResults([]); return; }
     const t = setTimeout(async () => {
@@ -538,9 +647,7 @@ function DmSearchModal({ onClose, onPick }) {
         {results.map((u) => (
           <button key={u.id} data-testid={`dm-pick-${u.id}`} onClick={() => onPick(u)}
             className="w-full flex items-center gap-3 p-3 rounded-2xl hover:bg-white/5 transition-colors text-right">
-            <div className="w-9 h-9 rounded-full gradient-rose flex items-center justify-center text-xs text-white font-display">
-              {u.display_name?.[0]?.toUpperCase()}
-            </div>
+            <Avatar user={u} size={36} />
             <div className="min-w-0">
               <div className="text-sm truncate">{u.display_name}</div>
               <div className="font-mono-key text-[10px] text-[var(--muted-soft)] truncate">@{u.username}</div>
@@ -554,14 +661,14 @@ function DmSearchModal({ onClose, onPick }) {
 }
 
 function EmojiManagerModal({ serverId, serverName, onClose }) {
-  const [emojis, setEmojis] = useState([]);
-  const [name, setName] = useState("");
-  const [file, setFile] = useState(null);
+  const [tab, setTab] = useState("emoji");
+  const [items, setItems] = useState([]);
+  const [name, setName] = useState(""); const [file, setFile] = useState(null);
   const [uploading, setUploading] = useState(false);
 
   const load = async () => {
     const { data } = await api.get(`/servers/${serverId}/emojis`);
-    setEmojis(data.emojis);
+    setItems(data.emojis);
   };
   useEffect(() => { load(); }, [serverId]);
 
@@ -570,41 +677,46 @@ function EmojiManagerModal({ serverId, serverName, onClose }) {
     if (!file || !name) return;
     setUploading(true);
     try {
-      const fd = new FormData();
-      fd.append("file", file);
-      await api.post(`/servers/${serverId}/emojis?name=${encodeURIComponent(name)}`, fd);
+      const fd = new FormData(); fd.append("file", file);
+      await api.post(`/servers/${serverId}/emojis?name=${encodeURIComponent(name)}&kind=${tab}`, fd);
       toast.success("تمت الإضافة");
       setName(""); setFile(null);
-      await load();
-      refreshEmojiCache();
+      await load(); refreshEmojiCache();
     } catch (e) { toast.error(formatApiError(e)); }
     finally { setUploading(false); }
   };
   const del = async (id) => {
-    if (!window.confirm("حذف هذا الإيموجي؟")) return;
-    try {
-      await api.delete(`/servers/${serverId}/emojis/${id}`);
-      await load(); refreshEmojiCache();
-    } catch (e) { toast.error(formatApiError(e)); }
+    if (!window.confirm("حذف؟")) return;
+    try { await api.delete(`/servers/${serverId}/emojis/${id}`); await load(); refreshEmojiCache(); }
+    catch (e) { toast.error(formatApiError(e)); }
   };
 
+  const filtered = items.filter(i => (i.kind || "emoji") === tab);
+
   return (
-    <ModalShell wide title={`إيموجيات: ${serverName}`} onClose={onClose}>
+    <ModalShell wide title={`${tab === "emoji" ? "إيموجيات" : "ستيكرات"}: ${serverName}`} onClose={onClose}>
+      <div className="flex gap-2 mb-5">
+        <button onClick={() => setTab("emoji")} data-testid="tab-emoji-kind"
+          className={`px-4 py-2 rounded-full text-xs transition ${tab === "emoji" ? "gradient-rose text-white" : "btn-soft"}`}>إيموجي</button>
+        <button onClick={() => setTab("sticker")} data-testid="tab-sticker-kind"
+          className={`px-4 py-2 rounded-full text-xs transition ${tab === "sticker" ? "gradient-rose text-white" : "btn-soft"}`}>ستيكر</button>
+      </div>
+
       <form onSubmit={upload} className="bg-[var(--surface)] rounded-2xl p-4 mb-5 space-y-3">
-        <div className="label-soft">إضافة إيموجي جديد</div>
+        <div className="label-soft">إضافة {tab === "emoji" ? "إيموجي" : "ستيكر"} جديد</div>
         <div className="grid grid-cols-[1fr,auto] gap-3 items-end">
           <div>
             <label className="block text-[10px] text-[var(--muted)] mb-1">الاسم (للاستدعاء :name:)</label>
             <input data-testid="emoji-name-input" value={name}
               onChange={(e) => setName(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "_"))}
-              required maxLength={32} dir="ltr" placeholder="party_blob"
+              required maxLength={32} dir="ltr" placeholder={tab === "emoji" ? "happy" : "love_kiss"}
               className="w-full input-soft px-3 py-2 text-sm font-mono-key" />
           </div>
           <div>
-            <label className="block text-[10px] text-[var(--muted)] mb-1">الصورة (≤ ٥١٢KB)</label>
+            <label className="block text-[10px] text-[var(--muted)] mb-1">الصورة (≤ {tab === "emoji" ? "٥١٢KB" : "١MB"})</label>
             <label className="btn-soft px-4 py-2 text-xs cursor-pointer flex items-center gap-2">
               <ImagePlus size={14} />
-              {file ? file.name.slice(0, 20) : "اختر..."}
+              {file ? file.name.slice(0, 18) : "اختر..."}
               <input type="file" accept="image/png,image/gif,image/webp,image/jpeg" hidden
                 data-testid="emoji-file-input" onChange={(e) => setFile(e.target.files?.[0] || null)} />
             </label>
@@ -616,14 +728,15 @@ function EmojiManagerModal({ serverId, serverName, onClose }) {
         </button>
       </form>
       <div>
-        <div className="label-soft mb-3">الإيموجيات الحالية ({emojis.length})</div>
-        {emojis.length === 0 ? (
-          <div className="text-xs text-[var(--muted)] p-4 text-center">لا توجد إيموجيات بعد</div>
+        <div className="label-soft mb-3">القائمة الحالية ({filtered.length})</div>
+        {filtered.length === 0 ? (
+          <div className="text-xs text-[var(--muted)] p-4 text-center">لا توجد {tab === "emoji" ? "إيموجيات" : "ستيكرات"} بعد</div>
         ) : (
           <div className="grid grid-cols-4 sm:grid-cols-6 gap-3 max-h-80 overflow-y-auto">
-            {emojis.map((e) => (
+            {filtered.map((e) => (
               <div key={e.id} className="bg-[var(--surface)] rounded-2xl p-3 group flex flex-col items-center gap-1 relative">
-                <img src={`${BASE}/api/emojis/${e.id}/image`} alt={e.name} className="w-10 h-10 object-contain" />
+                <img src={`${BASE}/api/emojis/${e.id}/image`} alt={e.name}
+                  className={tab === "sticker" ? "w-16 h-16 object-contain" : "w-10 h-10 object-contain"} />
                 <span className="text-[10px] font-mono-key text-[var(--muted)] truncate w-full text-center">:{e.name}:</span>
                 <button onClick={() => del(e.id)} data-testid={`del-emoji-${e.id}`}
                   className="absolute top-1.5 left-1.5 opacity-0 group-hover:opacity-100 text-[var(--error)] hover:text-white w-5 h-5 rounded-full bg-black/40 flex items-center justify-center">
@@ -638,7 +751,36 @@ function EmojiManagerModal({ serverId, serverName, onClose }) {
   );
 }
 
-function IncomingCallToast({ call, onAccept, onReject }) {
+function StickerPickerModal({ onClose, onPick }) {
+  const [stickers, setStickers] = useState([]);
+  useEffect(() => {
+    api.get("/emojis").then(({ data }) => {
+      setStickers(data.emojis.filter(e => e.kind === "sticker"));
+    }).catch(() => {});
+  }, []);
+  return (
+    <ModalShell title="الستيكرات" onClose={onClose}>
+      {stickers.length === 0 ? (
+        <div className="text-center text-xs text-[var(--muted)] py-10">
+          لا توجد ستيكرات بعد. ارفع ستيكرات من إعدادات السيرفر (زر الإيموجي في رأس قائمة القنوات).
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 sm:grid-cols-4 gap-3 max-h-96 overflow-y-auto">
+          {stickers.map((s) => (
+            <button key={s.id} data-testid={`pick-sticker-${s.id}`} onClick={() => onPick(s)}
+              className="bg-[var(--surface)] rounded-2xl p-3 hover:bg-[var(--accent)]/10 transition group flex flex-col items-center gap-1.5">
+              <img src={`${BASE}/api/emojis/${s.id}/image`} alt={s.name}
+                className="w-20 h-20 object-contain group-hover:scale-110 transition" />
+              <span className="text-[10px] font-mono-key text-[var(--muted)] truncate w-full text-center">:{s.name}:</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </ModalShell>
+  );
+}
+
+function IncomingToast({ call, onAccept, onReject, icon, label }) {
   return (
     <div dir="rtl" className="fixed bottom-6 right-6 z-50 glass-card p-4 max-w-sm flex items-center gap-4 animate-chat-in">
       <div className="w-12 h-12 rounded-full gradient-rose flex items-center justify-center text-white font-display heart-pulse">
@@ -646,7 +788,7 @@ function IncomingCallToast({ call, onAccept, onReject }) {
       </div>
       <div className="flex-1 min-w-0">
         <div className="text-sm font-medium truncate">{call.partner.display_name}</div>
-        <div className="text-xs label-soft">مكالمة واردة</div>
+        <div className="text-xs label-soft">{label}</div>
       </div>
       <button data-testid="incoming-reject" onClick={onReject}
         className="w-10 h-10 rounded-full bg-[var(--error)]/20 text-[var(--error)] flex items-center justify-center hover:bg-[var(--error)]/40">
@@ -654,7 +796,7 @@ function IncomingCallToast({ call, onAccept, onReject }) {
       </button>
       <button data-testid="incoming-accept" onClick={onAccept}
         className="w-10 h-10 rounded-full gradient-rose text-white flex items-center justify-center heart-pulse">
-        <Phone size={14} />
+        {icon}
       </button>
     </div>
   );
