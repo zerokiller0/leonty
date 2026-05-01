@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import "./App.css";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
@@ -29,11 +30,15 @@ function PublicOnly({ children }) {
 }
 
 export default function App() {
+  useEffect(() => {
+    document.documentElement.setAttribute("dir", "rtl");
+    document.documentElement.setAttribute("lang", "ar");
+  }, []);
   return (
     <div className="App">
       <BrowserRouter>
         <AuthProvider>
-          <Toaster theme="dark" position="top-right" richColors closeButton />
+          <Toaster theme="dark" position="top-left" richColors closeButton />
           <Routes>
             <Route path="/" element={<Landing />} />
             <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />

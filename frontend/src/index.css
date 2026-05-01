@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Work+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@300;400;500;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@300;400;500;600&family=Tajawal:wght@300;400;500;700;900&family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap");
 
 @tailwind base;
 @tailwind components;
@@ -24,20 +24,44 @@ body,
     color: #ffffff;
 }
 
+html {
+    direction: rtl;
+}
+
 body {
     margin: 0;
-    font-family: "Work Sans", system-ui, sans-serif;
+    font-family:
+        "IBM Plex Sans Arabic", "Tajawal", "Work Sans", system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
-    font-feature-settings: "ss01";
 }
 
 .font-display {
+    font-family: "Tajawal", "Outfit", sans-serif;
+    letter-spacing: -0.01em;
+    font-weight: 700;
+}
+
+.font-display-en {
     font-family: "Outfit", sans-serif;
     letter-spacing: -0.02em;
+    direction: ltr;
+    display: inline-block;
 }
 
 .font-mono-key {
     font-family: "IBM Plex Mono", monospace;
+    direction: ltr;
+    display: inline-block;
+    unicode-bidi: isolate;
+}
+
+/* Arabic uppercase replacement for tracking labels - keep tracking but no uppercase since Arabic doesn't have case */
+.label-ar {
+    font-family: "IBM Plex Sans Arabic", "Tajawal", sans-serif;
+    letter-spacing: 0;
+    font-size: 11px;
+    font-weight: 500;
+    color: rgb(156, 163, 175);
 }
 
 ::selection {
@@ -76,7 +100,6 @@ body {
     }
 }
 
-/* Custom scrollbar */
 ::-webkit-scrollbar {
     width: 6px;
     height: 6px;
@@ -92,7 +115,6 @@ body {
     background: rgba(255, 255, 255, 0.3);
 }
 
-/* Animations */
 @keyframes fadeInUp {
     from {
         opacity: 0;
@@ -135,11 +157,18 @@ body {
     background-size: 48px 48px;
 }
 
-.noise-overlay::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    opacity: 0.04;
-    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9'/></filter><rect width='120' height='120' filter='url(%23n)' opacity='0.5'/></svg>");
+/* Inline emoji image used in message content */
+.inline-emoji {
+    display: inline-block;
+    width: 1.4em;
+    height: 1.4em;
+    object-fit: contain;
+    vertical-align: -0.3em;
+    margin: 0 1px;
+}
+
+/* RTL: lucide arrow icons should not flip */
+[data-keep-ltr] {
+    direction: ltr;
+    unicode-bidi: isolate;
 }

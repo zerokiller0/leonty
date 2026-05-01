@@ -86,6 +86,7 @@ def public_user(u: dict) -> dict:
         "avatar_url": u.get("avatar_url"),
         "public_key": u.get("public_key"),
         "two_factor_enabled": bool(u.get("two_factor_secret")),
+        "is_guest": bool(u.get("is_guest", False)),
         "created_at": iso(u.get("created_at")),
     }
 
@@ -154,6 +155,23 @@ class DMSendIn(BaseModel):
 
 class JoinServerIn(BaseModel):
     invite_code: str
+
+class GuestRegisterIn(BaseModel):
+    public_key: str
+    encrypted_private_key: str
+    key_salt: str
+    recovery_code: str  # client-generated; used as password & for key encryption
+    display_name: Optional[str] = None
+
+class GuestLoginIn(BaseModel):
+    username: str
+    recovery_code: str
+
+class UpgradeAccountIn(BaseModel):
+    email: EmailStr
+    password: str
+    encrypted_private_key: str
+    key_salt: str
 
 # ---------- Auth Routes ----------
 @api.post("/auth/register")
@@ -236,6 +254,73 @@ async def refresh_token(request: Request, response: Response):
         return {"access_token": new_access}
     except jwt.InvalidTokenError:
         raise HTTPException(401, "Invalid token")
+
+# ---------- Guest ----------
+@api.post("/auth/guest")
+async def register_guest(body: GuestRegisterIn, request: Request, response: Response):
+    suffix = secrets.token_hex(3)
+    username = f"guest_{suffix}"
+    email = f"{username}@guest.cipher.local"
+    uid = str(uuid.uuid4())
+    user = {
+        "id": uid,
+        "email": email,
+        "username": username,
+        "display_name": body.display_name or f"ضيف_{suffix}",
+        "avatar_url": None,
+        "password_hash": hash_password(body.recovery_code),
+        "public_key": body.public_key,
+        "encrypted_private_key": body.encrypted_private_key,
+        "key_salt": body.key_salt,
+        "two_factor_secret": None,
+        "is_guest": True,
+        "created_at": now_utc().isoformat(),
+    }
+    await db.users.insert_one(user)
+    await log_session(request, uid, "guest_register")
+    access = create_access(uid, email)
+    refresh = create_refresh(uid)
+    set_auth_cookies(response, access, refresh)
+    pu = public_user(user)
+    pu["is_guest"] = True
+    return {"user": pu, "access_token": access, "username": username,
+            "encrypted_private_key": body.encrypted_private_key, "key_salt": body.key_salt}
+
+@api.post("/auth/guest/login")
+async def login_guest(body: GuestLoginIn, request: Request, response: Response):
+    user = await db.users.find_one({"username": body.username, "is_guest": True}, {"_id": 0})
+    if not user or not verify_password(body.recovery_code, user["password_hash"]):
+        raise HTTPException(401, "اسم المستخدم أو كود الاسترجاع غير صحيح")
+    await log_session(request, user["id"], "guest_login")
+    access = create_access(user["id"], user["email"])
+    refresh = create_refresh(user["id"])
+    set_auth_cookies(response, access, refresh)
+    pu = public_user(user)
+    pu["is_guest"] = True
+    return {"user": pu, "access_token": access,
+            "encrypted_private_key": user.get("encrypted_private_key"),
+            "key_salt": user.get("key_salt")}
+
+@api.post("/auth/upgrade")
+async def upgrade_account(body: UpgradeAccountIn, user: dict = Depends(get_current_user)):
+    if not user.get("is_guest"):
+        raise HTTPException(400, "الحساب مرقّى مسبقًا")
+    new_email = body.email.lower()
+    existing = await db.users.find_one({"email": new_email})
+    if existing and existing["id"] != user["id"]:
+        raise HTTPException(400, "البريد مستخدم مسبقًا")
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {
+            "email": new_email,
+            "password_hash": hash_password(body.password),
+            "encrypted_private_key": body.encrypted_private_key,
+            "key_salt": body.key_salt,
+            "is_guest": False,
+        }}
+    )
+    u = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    return {"user": public_user(u)}
 
 # ---------- 2FA ----------
 @api.post("/auth/2fa/setup")
@@ -533,6 +618,85 @@ async def get_file_meta(file_id: str, user: dict = Depends(get_current_user)):
     if not rec:
         raise HTTPException(404, "Not found")
     return {"file": rec}
+
+# ---------- Emojis ----------
+@api.post("/servers/{server_id}/emojis")
+async def upload_emoji(server_id: str, name: str, file: UploadFile = File(...),
+                       user: dict = Depends(get_current_user)):
+    s = await db.servers.find_one({"id": server_id, "members": user["id"]}, {"_id": 0})
+    if not s:
+        raise HTTPException(404, "Server not found")
+    name = name.strip().lower().replace(" ", "_")
+    if not name or len(name) > 32:
+        raise HTTPException(400, "Invalid emoji name")
+    if await db.emojis.find_one({"server_id": server_id, "name": name}):
+        raise HTTPException(400, "Emoji name already used in this server")
+    fid = str(uuid.uuid4())
+    path = UPLOAD_DIR / fid
+    content = await file.read()
+    if len(content) > 512 * 1024:
+        raise HTTPException(400, "Emoji must be under 512KB")
+    with open(path, "wb") as f:
+        f.write(content)
+    rec = {
+        "id": fid,
+        "server_id": server_id,
+        "name": name,
+        "uploader_id": user["id"],
+        "content_type": file.content_type or "image/png",
+        "created_at": now_utc().isoformat(),
+    }
+    await db.emojis.insert_one(rec)
+    rec.pop("_id", None)
+    return {"emoji": rec}
+
+@api.get("/servers/{server_id}/emojis")
+async def list_server_emojis(server_id: str, user: dict = Depends(get_current_user)):
+    s = await db.servers.find_one({"id": server_id, "members": user["id"]}, {"_id": 0})
+    if not s:
+        raise HTTPException(404, "Server not found")
+    items = await db.emojis.find({"server_id": server_id}, {"_id": 0}).sort("created_at", 1).to_list(500)
+    return {"emojis": items}
+
+@api.get("/emojis")
+async def list_my_emojis(user: dict = Depends(get_current_user)):
+    # All emojis from servers the user is a member of
+    servers = await db.servers.find({"members": user["id"]}, {"_id": 0, "id": 1, "name": 1}).to_list(500)
+    sid_map = {s["id"]: s["name"] for s in servers}
+    items = await db.emojis.find({"server_id": {"$in": list(sid_map.keys())}}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    for e in items:
+        e["server_name"] = sid_map.get(e["server_id"], "")
+    return {"emojis": items}
+
+@api.delete("/servers/{server_id}/emojis/{emoji_id}")
+async def delete_emoji(server_id: str, emoji_id: str, user: dict = Depends(get_current_user)):
+    s = await db.servers.find_one({"id": server_id, "members": user["id"]}, {"_id": 0})
+    if not s:
+        raise HTTPException(404, "Server not found")
+    emoji = await db.emojis.find_one({"id": emoji_id, "server_id": server_id}, {"_id": 0})
+    if not emoji:
+        raise HTTPException(404, "Not found")
+    if emoji["uploader_id"] != user["id"] and s["owner_id"] != user["id"]:
+        raise HTTPException(403, "Not allowed")
+    await db.emojis.delete_one({"id": emoji_id})
+    try:
+        (UPLOAD_DIR / emoji_id).unlink(missing_ok=True)
+    except Exception:
+        pass
+    return {"ok": True}
+
+@api.get("/emojis/{emoji_id}/image")
+async def get_emoji_image(emoji_id: str, user: dict = Depends(get_current_user)):
+    rec = await db.emojis.find_one({"id": emoji_id}, {"_id": 0})
+    if not rec:
+        raise HTTPException(404, "Not found")
+    path = UPLOAD_DIR / emoji_id
+    if not path.exists():
+        raise HTTPException(404, "Missing")
+    def iterfile():
+        with open(path, "rb") as f:
+            yield from f
+    return StreamingResponse(iterfile(), media_type=rec["content_type"])
 
 # ---------- Health ----------
 @api.get("/")

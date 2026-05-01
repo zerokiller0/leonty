@@ -1,0 +1,46 @@
+{
+  "summary": "Cipher backend iteration 2 — new endpoints for guest registration/login/upgrade and per-server custom emojis. 18/18 new pytest tests PASSED on the public URL. 13/13 regression tests from iteration 1 also PASSED. No bugs found; all specified edge cases covered (wrong recovery code → 401, non-guest guest-login → 401, non-guest upgrade → 400, duplicate email on upgrade → 400, permanent login after upgrade works, emoji duplicate name → 400, >512KB emoji → 400, non-member upload → 404, non-uploader non-owner delete → 403, /api/emojis strictly filters by membership, server_name attached, /emojis/{id}/image returns exact bytes).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/servers/{id}/emojis", "issue": "Returns HTTP 200 while the review spec expected 201. Minor semantics; clients relying on 201 would need status==200 tolerance. Suggest explicit status_code=201 in decorator."},
+      {"endpoint": "POST /api/servers/{id}/emojis", "issue": "Uses `name` as a bare function parameter → FastAPI treats it as a required query param. Works, but it's more idiomatic to declare `name: str = Query(...)` or accept it as a form field (multipart). Currently undocumented in /docs as a form field."},
+      {"endpoint": "POST /api/servers/{id}/emojis", "issue": "No MIME validation — a user can upload any file with content_type=image/png. Consider validating magic bytes or allowlisting image/png, image/gif, image/webp."},
+      {"endpoint": "POST /api/auth/guest", "issue": "Guest `recovery_code` has no min-length constraint server-side (Pydantic `str`). If client sends empty string, bcrypt will happily hash it. Add min_length=12 validation."},
+      {"endpoint": "POST /api/auth/upgrade", "issue": "No password strength validation (min length, complexity). Register uses password min on client; upgrade accepts any string. Minor."},
+      {"endpoint": "POST /api/auth/guest/login", "issue": "No brute-force lockout on recovery_code attempts; same concern as /auth/login from iteration 1. Since recovery_code is 16 alphanumeric chars entropy is high, but still recommended."},
+      {"endpoint": "GET /api/emojis/{id}/image", "issue": "Sync file iterator (yield from f) inside async handler — same pattern as /files/{id}, can block event loop for larger emojis."},
+      {"endpoint": "DELETE /api/servers/{id}/emojis/{id}", "issue": "Uses `path.unlink(missing_ok=True)` inside try/except — fine, but the underlying UPLOAD_DIR is shared with user file uploads (same uuid space). Low collision risk but worth documenting a separate EMOJI_DIR."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_guest_and_emojis.py",
+    "/app/backend/tests/test_cipher_backend.py",
+    "/app/test_reports/pytest/pytest_results_iter2.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: add status_code=201 to the emoji upload decorator to match REST semantics.",
+    "OPTIONAL: declare `name` as Form(...) or Query(...) explicitly on /servers/{id}/emojis for clearer OpenAPI.",
+    "OPTIONAL: validate emoji upload MIME / magic bytes (image/png|gif|webp only).",
+    "OPTIONAL: add min_length on GuestRegisterIn.recovery_code and UpgradeAccountIn.password."
+  ],
+  "critical_code_review_comments": [
+    "Guest flow is correctly orthogonal: is_guest=true set on register, login requires is_guest=true filter (prevents bypass), upgrade flips is_guest=false and accepts new encrypted_private_key re-wrapped under the new password — E2EE continuity preserved.",
+    "public_user() correctly omits password_hash and encrypted_private_key from responses.",
+    "Emoji membership check uses `{members: user_id}` filter — 404 returned for non-members (consistent with other server endpoints to avoid leaking existence).",
+    "/api/emojis scoping is implemented via two queries (servers → ids → emojis $in). O(N) but fine at current scale; consider a compound index (server_id,created_at) on emojis collection.",
+    "server.py is now 758 lines — crossed 700-line threshold flagged last iteration. Strongly recommend splitting into routers (auth, guest, servers, emojis, dms, files).",
+    "Mongo _id consistently excluded via projection {_id:0} and pop('_id',None) after insert_one — verified.",
+    "Emoji filename stored as `<uuid>` in UPLOAD_DIR (no extension) — content-type round-trips via DB record. Correct.",
+    "No XSS/escaping concern for :emoji_name: shortcodes since name is lowercased and space-replaced (but `:` and other specials aren't stripped — consider regex [a-z0-9_] only)."
+  ],
+  "updated_files": ["/app/backend/tests/test_guest_and_emojis.py"],
+  "success_rate": {"backend": "100% (31/31 overall, 18/18 new)", "frontend": "not tested (backend-only request per review_request.testing_type)"},
+  "test_credentials": "Admin: admin@cipher.io / Admin@Cipher2026 (PENDING keys; unused here). Each test creates its own TEST_ users / guests.",
+  "seed_data_creation": "Tests create their own TEST_ users, guests and TEST_EmojiSrv_* servers. No admin seed modifications.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run: `pytest backend/tests/ -v`. New tests live in /app/backend/tests/test_guest_and_emojis.py. Emoji upload uses query-param name + multipart file. PNG bytes are generated programmatically via _make_png (pure stdlib zlib+struct) — no PIL dependency. Size-limit test crafts a ~600KB PNG with a padded tEXt chunk. If frontend testing is requested next, verify: (a) guest registration screen shows & copies the 16-char recovery_code exactly once, (b) :shortcode: rendering swaps for <img src=/api/emojis/{id}/image>, (c) upgrade form re-wraps private key with new password before POSTing.",
+  "rca of the issue": "N/A — no backend bugs found. All 18 new endpoint tests and all 13 regression tests pass against the public URL."
+}
