@@ -151,11 +151,11 @@ class MessageCreateIn(BaseModel):
 
 class DMSendIn(BaseModel):
     recipient_id: str
-    # E2EE ciphertexts: sender_ciphertext encrypted with sender's public key,
-    # recipient_ciphertext encrypted with recipient's public key
-    sender_ciphertext: str
-    recipient_ciphertext: str
+    content: str
     attachment_id: Optional[str] = None
+
+class FriendRequestIn(BaseModel):
+    to_user_id: str
 
 class JoinServerIn(BaseModel):
     invite_code: str
@@ -687,6 +687,139 @@ async def list_server_emojis(server_id: str, user: dict = Depends(get_current_us
     for e in items:
         e.setdefault("kind", "emoji")
     return {"emojis": items}
+
+@api.get("/emojis")
+async def list_my_emojis(user: dict = Depends(get_current_user)):
+    # All emojis from servers the user is a member of
+    servers = await db.servers.find({"members": user["id"]}, {"_id": 0, "id": 1, "name": 1}).to_list(500)
+    sid_map = {s["id"]: s["name"] for s in servers}
+    items = await db.emojis.find({"server_id": {"$in": list(sid_map.keys())}}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    for e in items:
+        e["server_name"] = sid_map.get(e["server_id"], "")
+        e.setdefault("kind", "emoji")
+    return {"emojis": items}
+
+@api.delete("/servers/{server_id}/emojis/{emoji_id}")
+async def delete_emoji(server_id: str, emoji_id: str, user: dict = Depends(get_current_user)):
+    s = await db.servers.find_one({"id": server_id, "members": user["id"]}, {"_id": 0})
+    if not s:
+        raise HTTPException(404, "Server not found")
+    emoji = await db.emojis.find_one({"id": emoji_id, "server_id": server_id}, {"_id": 0})
+    if not emoji:
+        raise HTTPException(404, "Not found")
+    if emoji["uploader_id"] != user["id"] and s["owner_id"] != user["id"]:
+        raise HTTPException(403, "Not allowed")
+    await db.emojis.delete_one({"id": emoji_id})
+    try:
+        (UPLOAD_DIR / emoji_id).unlink(missing_ok=True)
+    except Exception:
+        pass
+    return {"ok": True}
+
+@api.get("/emojis/{emoji_id}/image")
+async def get_emoji_image(emoji_id: str, user: dict = Depends(get_current_user)):
+    rec = await db.emojis.find_one({"id": emoji_id}, {"_id": 0})
+    if not rec:
+        raise HTTPException(404, "Not found")
+    path = UPLOAD_DIR / emoji_id
+    if not path.exists():
+        raise HTTPException(404, "Missing")
+    def iterfile():
+        with open(path, "rb") as f:
+            yield from f
+    return StreamingResponse(iterfile(), media_type=rec["content_type"])
+
+# ---------- Calls (WebRTC signaling) ----------
+@api.post("/calls/signal")
+async def call_signal(body: CallSignalIn, user: dict = Depends(get_current_user)):
+    target = await db.users.find_one({"id": body.to_user_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(404, "Not found")
+    sig = {
+        "id": str(uuid.uuid4()),
+        "from_user_id": user["id"],
+        "from_user": {"id": user["id"], "display_name": user.get("display_name"), "username": user.get("username")},
+        "to_user_id": body.to_user_id,
+        "type": body.type,
+        "payload": body.payload,
+        "call_id": body.call_id,
+        "created_at": now_utc().isoformat(),
+    }
+    await db.signals.insert_one(sig)
+    return {"ok": True}
+
+@api.get("/calls/signals")
+async def get_signals(user: dict = Depends(get_current_user)):
+    items = await db.signals.find({"to_user_id": user["id"]}, {"_id": 0}).sort("created_at", 1).to_list(100)
+    if items:
+        ids = [i["id"] for i in items]
+        await db.signals.delete_many({"id": {"$in": ids}})
+    return {"signals": items}
+
+# ---------- Health ----------
+@api.get("/")
+async def root():
+    return {"app": "Leonty", "status": "ok"}
+
+app.include_router(api)
+
+# CORS: for credentialed cookies we need explicit origins — but frontend uses same host via ingress so same-origin. Keep permissive for preview.
+cors_origins = os.environ.get("CORS_ORIGINS", "*").split(",")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_origins if cors_origins != ["*"] else ["*"],
+    allow_credentials=True if cors_origins != ["*"] else False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+@app.on_event("startup")
+async def startup():
+    await db.users.create_index("email", unique=True)
+    await db.users.create_index("username", unique=True)
+    await db.users.create_index("id", unique=True)
+    await db.servers.create_index("id", unique=True)
+    await db.servers.create_index("invite_code", unique=True)
+    await db.channels.create_index("id", unique=True)
+    await db.channels.create_index("server_id")
+    await db.messages.create_index("channel_id")
+    await db.dms.create_index("conversation_id")
+    await db.sessions.create_index("user_id")
+    await db.signals.create_index("to_user_id")
+    await db.signals.create_index([("created_at", 1)], expireAfterSeconds=3600)
+    await db.dm_reads.create_index([("user_id", 1), ("conversation_id", 1)], unique=True)
+    await db.friend_requests.create_index("from_user_id")
+    await db.friend_requests.create_index("to_user_id")
+    await db.friendships.create_index([("user_a", 1), ("user_b", 1)], unique=True)
+    # Admin user with placeholder keys (admin must re-register or setup keys via UI on first login)
+    admin_email = os.environ.get("ADMIN_EMAIL", "admin@cipher.io")
+    admin_pw = os.environ.get("ADMIN_PASSWORD", "Admin@Cipher2026")
+    existing = await db.users.find_one({"email": admin_email})
+    if not existing:
+        uid = str(uuid.uuid4())
+        await db.users.insert_one({
+            "id": uid,
+            "email": admin_email,
+            "username": "admin",
+            "display_name": "Admin",
+            "avatar_url": None,
+            "password_hash": hash_password(admin_pw),
+            "public_key": "PENDING",
+            "encrypted_private_key": "PENDING",
+            "key_salt": "PENDING",
+            "two_factor_secret": None,
+            "created_at": now_utc().isoformat(),
+            "role": "admin",
+        })
+        logger.info(f"Seeded admin user: {admin_email}")
+
+@app.on_event("shutdown")
+async def shutdown():
+    client.close()
+   return {"emojis": items}
 
 @api.get("/emojis")
 async def list_my_emojis(user: dict = Depends(get_current_user)):

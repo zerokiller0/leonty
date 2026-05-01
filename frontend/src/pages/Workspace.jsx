@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import api, { formatApiError } from "../lib/api";
-import { encryptForPublicKey, decryptWithPrivateKey, fingerprint } from "../lib/crypto";
+import { fingerprint } from "../lib/crypto";
 import { EmojiButton } from "../components/EmojiPicker";
 import MessageContent, { refreshEmojiCache, classifyMessage, useEmojiMap } from "../components/MessageContent";
 import VoiceRecorder from "../components/VoiceRecorder";
@@ -10,8 +10,9 @@ import VoiceCall from "../components/VoiceCall";
 import WatchTogether from "../components/WatchTogether";
 import {
   Heart, Plus, Hash, Settings as SettingsIcon, LogOut, Search, Send,
-  Lock, MessageCircle, Copy, X, Smile, Trash2, ImagePlus, Phone, Video,
+  MessageCircle, Copy, X, Smile, Trash2, ImagePlus, Phone, Video,
   Film, Sticker as StickerIcon, Calendar, Paperclip, Download, FileIcon, Image as ImageIcon,
+  UserPlus, Check, UserX,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -20,7 +21,7 @@ const BASE = process.env.REACT_APP_BACKEND_URL;
 export default function Workspace() {
   const { serverId, channelId, userId } = useParams();
   const nav = useNavigate();
-  const { user, logout, privateKeyB64 } = useAuth();
+  const { user, logout } = useAuth();
   const [servers, setServers] = useState([]);
   const [activeServer, setActiveServer] = useState(null);
   const [channels, setChannels] = useState([]);
@@ -35,6 +36,8 @@ export default function Workspace() {
   const [showEmojiManager, setShowEmojiManager] = useState(false);
   const [showStickerPicker, setShowStickerPicker] = useState(false);
   const [showPlusMenu, setShowPlusMenu] = useState(false);
+  const [showFriendsModal, setShowFriendsModal] = useState(false);
+  const [friendRequestCount, setFriendRequestCount] = useState(0);
   const [callPartner, setCallPartner] = useState(null);
   const [incomingCall, setIncomingCall] = useState(null);
   const [watchPartner, setWatchPartner] = useState(null);
@@ -45,9 +48,12 @@ export default function Workspace() {
   const emojiMap = useEmojiMap();
 
   const loadSidebar = async () => {
-    const [s, d] = await Promise.all([api.get("/servers"), api.get("/dms")]);
+    const [s, d, fr] = await Promise.all([
+      api.get("/servers"), api.get("/dms"), api.get("/friends/requests").catch(() => ({ data: { incoming: [] } })),
+    ]);
     setServers(s.data.servers);
     setDmConversations(d.data.conversations);
+    setFriendRequestCount(fr.data.incoming?.length || 0);
   };
 
   useEffect(() => {
@@ -84,25 +90,16 @@ export default function Workspace() {
           if (!cancelled) setMessages(data.messages);
         } else if (userId) {
           const { data } = await api.get(`/dms/${userId}`);
-          if (!cancelled) {
-            const decrypted = await Promise.all(
-              data.messages.map(async (m) => {
-                try {
-                  const ct = m.sender_id === user.id ? m.sender_ciphertext : m.recipient_ciphertext;
-                  const pt = privateKeyB64 ? await decryptWithPrivateKey(ct, privateKeyB64) : "[مقفل]";
-                  return { ...m, plaintext: pt };
-                } catch { return { ...m, plaintext: "[فشل فكّ التشفير]" }; }
-              }),
-            );
-            setMessages(decrypted);
-          }
+          if (!cancelled) setMessages(data.messages);
         } else { setMessages([]); }
       } catch {}
     };
     load();
     const t = setInterval(load, 3000);
-    return () => { cancelled = true; clearInterval(t); };
-  }, [channelId, userId, privateKeyB64, user?.id]);
+    // also refresh sidebar to update unread counts
+    const t2 = setInterval(loadSidebar, 4000);
+    return () => { cancelled = true; clearInterval(t); clearInterval(t2); };
+  }, [channelId, userId, user?.id]);
 
   // Poll for incoming calls + watch invites
   useEffect(() => {
@@ -129,10 +126,7 @@ export default function Workspace() {
       if (channelId) {
         await api.post(`/channels/${channelId}/messages`, { content: input });
       } else if (userId && dmPartner) {
-        if (!privateKeyB64) { toast.error("لا يوجد مفتاح خاص"); return; }
-        const recipient_ciphertext = await encryptForPublicKey(input, dmPartner.public_key);
-        const sender_ciphertext = await encryptForPublicKey(input, user.public_key);
-        await api.post("/dms", { recipient_id: dmPartner.id, sender_ciphertext, recipient_ciphertext });
+        await api.post("/dms", { recipient_id: dmPartner.id, content: input });
       }
       setInput("");
     } catch (e) { toast.error(formatApiError(e)); }
@@ -143,10 +137,7 @@ export default function Workspace() {
       if (channelId) {
         await api.post(`/channels/${channelId}/messages`, { content: placeholder, attachment_id: fileId });
       } else if (userId && dmPartner) {
-        const ct = `${placeholder}|attachment:${fileId}`;
-        const recipient_ciphertext = await encryptForPublicKey(ct, dmPartner.public_key);
-        const sender_ciphertext = await encryptForPublicKey(ct, user.public_key);
-        await api.post("/dms", { recipient_id: dmPartner.id, sender_ciphertext, recipient_ciphertext, attachment_id: fileId });
+        await api.post("/dms", { recipient_id: dmPartner.id, content: placeholder, attachment_id: fileId });
       }
     } catch (e) { toast.error(formatApiError(e)); }
   };
@@ -168,9 +159,7 @@ export default function Workspace() {
       if (channelId) {
         await api.post(`/channels/${channelId}/messages`, { content, attachment_id: fid });
       } else if (userId && dmPartner) {
-        const recipient_ciphertext = await encryptForPublicKey(content, dmPartner.public_key);
-        const sender_ciphertext = await encryptForPublicKey(content, user.public_key);
-        await api.post("/dms", { recipient_id: dmPartner.id, sender_ciphertext, recipient_ciphertext, attachment_id: fid });
+        await api.post("/dms", { recipient_id: dmPartner.id, content, attachment_id: fid });
       }
       toast.success("تم الإرسال", { id: toastId });
     } catch (e) { toast.error(formatApiError(e), { id: toastId }); }
@@ -182,9 +171,7 @@ export default function Workspace() {
       if (channelId) {
         await api.post(`/channels/${channelId}/messages`, { content: text });
       } else if (userId && dmPartner) {
-        const recipient_ciphertext = await encryptForPublicKey(text, dmPartner.public_key);
-        const sender_ciphertext = await encryptForPublicKey(text, user.public_key);
-        await api.post("/dms", { recipient_id: dmPartner.id, sender_ciphertext, recipient_ciphertext });
+        await api.post("/dms", { recipient_id: dmPartner.id, content: text });
       }
       setShowStickerPicker(false);
     } catch (e) { toast.error(formatApiError(e)); }
