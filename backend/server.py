@@ -173,6 +173,12 @@ class UpgradeAccountIn(BaseModel):
     encrypted_private_key: str
     key_salt: str
 
+class CallSignalIn(BaseModel):
+    to_user_id: str
+    type: str  # offer | answer | candidate | hangup | ringing
+    payload: dict
+    call_id: Optional[str] = None
+
 # ---------- Auth Routes ----------
 @api.post("/auth/register")
 async def register(body: RegisterIn, request: Request, response: Response):
@@ -698,6 +704,33 @@ async def get_emoji_image(emoji_id: str, user: dict = Depends(get_current_user))
             yield from f
     return StreamingResponse(iterfile(), media_type=rec["content_type"])
 
+# ---------- Calls (WebRTC signaling) ----------
+@api.post("/calls/signal")
+async def call_signal(body: CallSignalIn, user: dict = Depends(get_current_user)):
+    target = await db.users.find_one({"id": body.to_user_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(404, "Not found")
+    sig = {
+        "id": str(uuid.uuid4()),
+        "from_user_id": user["id"],
+        "from_user": {"id": user["id"], "display_name": user.get("display_name"), "username": user.get("username")},
+        "to_user_id": body.to_user_id,
+        "type": body.type,
+        "payload": body.payload,
+        "call_id": body.call_id,
+        "created_at": now_utc().isoformat(),
+    }
+    await db.signals.insert_one(sig)
+    return {"ok": True}
+
+@api.get("/calls/signals")
+async def get_signals(user: dict = Depends(get_current_user)):
+    items = await db.signals.find({"to_user_id": user["id"]}, {"_id": 0}).sort("created_at", 1).to_list(100)
+    if items:
+        ids = [i["id"] for i in items]
+        await db.signals.delete_many({"id": {"$in": ids}})
+    return {"signals": items}
+
 # ---------- Health ----------
 @api.get("/")
 async def root():
@@ -730,6 +763,8 @@ async def startup():
     await db.messages.create_index("channel_id")
     await db.dms.create_index("conversation_id")
     await db.sessions.create_index("user_id")
+    await db.signals.create_index("to_user_id")
+    await db.signals.create_index([("created_at", 1)], expireAfterSeconds=3600)
     # Admin user with placeholder keys (admin must re-register or setup keys via UI on first login)
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@cipher.io")
     admin_pw = os.environ.get("ADMIN_PASSWORD", "Admin@Cipher2026")

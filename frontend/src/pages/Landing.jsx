@@ -1,25 +1,26 @@
 import { Link } from "react-router-dom";
-import { Shield, Lock, Users, KeyRound, Fingerprint, Eye, ArrowLeft } from "lucide-react";
+import { Heart, Lock, Users, KeyRound, Fingerprint, Eye, ArrowLeft, Sparkles } from "lucide-react";
 
 export default function Landing() {
   return (
-    <div className="min-h-screen bg-[#0A0A0A] text-white relative overflow-hidden">
-      <div className="absolute inset-0 grid-lines opacity-40 pointer-events-none" />
+    <div className="min-h-screen text-[var(--text)] relative overflow-hidden">
+      {/* Floating blobs */}
+      <div className="absolute top-[10%] right-[15%] w-96 h-96 rounded-full bg-[var(--accent)]/10 blur-3xl float-blob pointer-events-none" />
+      <div className="absolute bottom-[20%] left-[10%] w-80 h-80 rounded-full bg-[var(--secondary)]/10 blur-3xl float-blob pointer-events-none" style={{animationDelay: "3s"}} />
 
-      <nav className="relative z-10 border-b border-white/10">
+      <nav className="relative z-10 border-b border-[var(--border)]">
         <div className="max-w-7xl mx-auto px-6 py-5 flex items-center justify-between">
-          <Link to="/" className="flex items-center gap-2" data-testid="brand-link">
-            <div className="w-7 h-7 border border-[#00FF66] flex items-center justify-center">
-              <Shield size={14} className="text-[#00FF66]" />
+          <Link to="/" className="flex items-center gap-2.5" data-testid="brand-link">
+            <div className="w-9 h-9 rounded-2xl gradient-rose flex items-center justify-center shadow-lg shadow-[var(--accent)]/20">
+              <Heart size={16} className="text-white" fill="white" />
             </div>
-            <span className="font-display-en text-lg">CIPHER</span>
-            <span className="font-mono-key text-[10px] text-[#00FF66] tracking-widest">//E2EE</span>
+            <span className="font-display-en text-xl">Cipher</span>
           </Link>
           <div className="flex items-center gap-6">
-            <a href="#features" className="text-sm text-gray-400 hover:text-white transition-colors hidden sm:block">المميزات</a>
-            <a href="#security" className="text-sm text-gray-400 hover:text-white transition-colors hidden sm:block">الأمان</a>
-            <Link to="/login" data-testid="nav-login-btn" className="text-sm text-gray-300 hover:text-white">تسجيل الدخول</Link>
-            <Link to="/register" data-testid="nav-signup-btn" className="text-sm bg-white text-black px-4 py-2 hover:bg-[#00FF66] transition-colors font-medium">
+            <a href="#features" className="text-sm text-[var(--muted)] hover:text-white transition-colors hidden sm:block">المميزات</a>
+            <a href="#security" className="text-sm text-[var(--muted)] hover:text-white transition-colors hidden sm:block">الأمان</a>
+            <Link to="/login" data-testid="nav-login-btn" className="text-sm text-[var(--text)] hover:text-[var(--accent)] transition-colors">دخول</Link>
+            <Link to="/register" data-testid="nav-signup-btn" className="btn-rose text-sm px-5 py-2.5">
               ابدأ الآن
             </Link>
           </div>
@@ -29,143 +30,142 @@ export default function Landing() {
       <section className="relative z-10 max-w-7xl mx-auto px-6 pt-20 pb-32">
         <div className="grid lg:grid-cols-12 gap-12 items-center">
           <div className="lg:col-span-7">
-            <div className="inline-flex items-center gap-2 border border-white/10 px-3 py-1.5 mb-8">
-              <span className="w-1.5 h-1.5 bg-[#00FF66] rounded-full pulse-dot" />
-              <span className="font-mono-key text-[10px] tracking-[0.3em] text-gray-400">ZERO-KNOWLEDGE · END-TO-END</span>
+            <div className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)]/10 border border-[var(--accent)]/20 px-4 py-1.5 mb-8">
+              <Sparkles size={12} className="text-[var(--accent)]" />
+              <span className="text-xs text-[var(--accent-soft)]">مشفّر بالكامل · صُمّم بحب</span>
             </div>
-            <h1 className="font-display text-5xl sm:text-6xl lg:text-7xl leading-[1.05]">
-              مُراسِل آمن<br />
-              <span className="text-[#00FF66]">السيرفرات لا تستطيع قراءته.</span>
+            <h1 className="font-display text-5xl sm:text-6xl lg:text-7xl leading-[1.1]">
+              مساحتك الخاصة <br />
+              <span className="text-gradient-rose">للأشخاص اللي تحبهم.</span>
             </h1>
-            <p className="mt-8 text-gray-400 text-lg max-w-xl leading-relaxed">
-              منصة دردشة جماعية ورسائل خاصة بتشفير شامل من الطرف للطرف.
-              مفاتيحك الخاصة لا تغادر جهازك أبداً. مصممة لمن يأخذ خصوصيته بجدية —
-              بديل آمن لـ ديسكورد و تيمز، بدون مراقبة.
+            <p className="mt-8 text-[var(--muted)] text-lg max-w-xl leading-relaxed">
+              منصة دردشة ومكالمات بتشفير شامل من الطرف للطرف. لرسائل خاصة، لحظات صادقة،
+              ومحادثات لا يقرأها أحد سواكم. مفاتيحك تبقى معك — في جهازك فقط.
             </p>
             <div className="mt-10 flex items-center gap-4 flex-wrap">
               <Link to="/register" data-testid="hero-cta-btn"
-                className="group inline-flex items-center gap-2 bg-[#00FF66] text-black px-6 py-3.5 font-medium hover:bg-white transition-all">
-                أنشئ حساب آمن
+                className="group btn-rose inline-flex items-center gap-2 px-7 py-4 text-base">
+                أنشئ مساحتك
                 <ArrowLeft size={16} className="group-hover:-translate-x-1 transition-transform" />
               </Link>
-              <Link to="/login" className="text-sm text-gray-400 hover:text-white transition-colors">
+              <Link to="/login" className="text-sm text-[var(--muted)] hover:text-white transition-colors">
                 ← لدي حساب
               </Link>
             </div>
 
             <div className="mt-16 flex items-center gap-8 flex-wrap">
-              <div className="flex items-center gap-2 text-xs text-gray-500">
-                <Lock size={12} className="text-[#00FF66]" />
-                <span className="font-mono-key tracking-widest">RSA-OAEP 2048</span>
-              </div>
-              <div className="flex items-center gap-2 text-xs text-gray-500">
-                <KeyRound size={12} className="text-[#00FF66]" />
-                <span className="font-mono-key tracking-widest">PBKDF2-200K</span>
-              </div>
-              <div className="flex items-center gap-2 text-xs text-gray-500">
-                <Fingerprint size={12} className="text-[#00FF66]" />
-                <span className="font-mono-key tracking-widest">2FA TOTP</span>
-              </div>
+              {[
+                { icon: Lock, label: "RSA-OAEP 2048" },
+                { icon: KeyRound, label: "PBKDF2-200K" },
+                { icon: Fingerprint, label: "2FA TOTP" },
+              ].map((s, i) => (
+                <div key={i} className="flex items-center gap-2 text-xs text-[var(--muted-soft)]">
+                  <s.icon size={12} className="text-[var(--accent)]" />
+                  <span className="font-mono-key tracking-widest">{s.label}</span>
+                </div>
+              ))}
             </div>
           </div>
 
           <div className="lg:col-span-5">
-            <div className="relative border border-white/10 bg-[#141414] p-6 space-y-3">
-              <div className="flex items-center justify-between pb-3 border-b border-white/10">
-                <span className="label-ar">قناة آمنة</span>
-                <div className="flex items-center gap-1.5">
-                  <Lock size={10} className="text-[#00FF66]" />
-                  <span className="font-mono-key text-[10px] text-[#00FF66]">ENCRYPTED</span>
+            <div className="relative glass-card p-6 space-y-3">
+              <div className="flex items-center justify-between pb-3 border-b border-[var(--border)]">
+                <span className="label-soft">قناة آمنة</span>
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[var(--accent)]/10">
+                  <Lock size={10} className="text-[var(--accent)]" />
+                  <span className="font-mono-key text-[10px] text-[var(--accent)]">ENCRYPTED</span>
                 </div>
               </div>
               <div className="py-2">
-                <div className="text-xs text-gray-500 mb-1">@ahmed · ١٤:٢٢</div>
-                <div className="inline-block border border-white/10 px-3 py-2 text-sm">الإصدار الجديد جاهز — راجع #الإعلانات</div>
+                <div className="text-xs text-[var(--muted-soft)] mb-1.5 ms-2">حبيبي · ١٤:٢٢</div>
+                <div className="inline-block bg-[var(--surface)] px-4 py-2.5 text-sm rounded-2xl">وحشتني اليوم 🌹</div>
               </div>
               <div className="py-2 text-left">
-                <div className="text-xs text-gray-500 mb-1">أنت · ١٤:٢٣</div>
-                <div className="inline-block bg-white/10 px-3 py-2 text-sm text-right">تمام، أرسل الإيصالات المشفرة الآن 🔒</div>
+                <div className="text-xs text-[var(--muted-soft)] mb-1.5 me-2">أنت · ١٤:٢٣</div>
+                <div className="inline-block gradient-rose text-white px-4 py-2.5 text-sm rounded-2xl text-right">وأنت أكثر ❤️</div>
               </div>
               <div className="py-2">
-                <div className="text-xs text-gray-500 mb-1">@ahmed · ١٤:٢٣</div>
-                <div className="inline-block border border-white/10 px-3 py-2">
-                  <span className="font-mono-key text-[#00FF66] text-xs">a3f9 c210 88bd ffe1 0102 9933 7721 ab4c</span>
+                <div className="text-xs text-[var(--muted-soft)] mb-1.5 ms-2">حبيبي · ١٤:٢٣</div>
+                <div className="inline-block bg-[var(--surface)] px-4 py-2.5 rounded-2xl">
+                  <span className="font-mono-key text-[var(--accent)] text-xs">a3f9 c210 88bd ffe1</span>
                 </div>
-                <div className="text-[10px] text-gray-600 mt-1">↑ بصمة مفتاحك — تحقّق منها مع أحمد شخصياً</div>
+                <div className="text-[10px] text-[var(--muted-soft)] mt-1 ms-2">↑ بصمة المحادثة — موثوقة</div>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      <section id="features" className="relative z-10 border-t border-white/10">
+      <section id="features" className="relative z-10 border-t border-[var(--border)]">
         <div className="max-w-7xl mx-auto px-6 py-24">
           <div className="mb-16">
-            <div className="font-mono-key text-[10px] tracking-[0.3em] text-[#00FF66] mb-4">/ 01 — PRIVACY FIRST</div>
+            <div className="text-xs text-[var(--accent)] mb-4 tracking-widest font-mono-key">/ 01 — لكم وحدكم</div>
             <h2 className="font-display text-4xl lg:text-5xl max-w-3xl">
-              كل رسالة. كل قناة. <span className="text-gray-500">لا يقرأها أحد سواك.</span>
+              كل رسالة. كل مكالمة. <span className="text-[var(--muted)]">لا يراها أحد سواكم.</span>
             </h2>
           </div>
 
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-px bg-white/10 border border-white/10">
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
             {features.map((f, i) => (
-              <div key={i} className="bg-[#0A0A0A] p-8 hover:bg-[#141414] transition-colors">
-                <f.icon size={22} className="text-[#00FF66] mb-6" />
-                <div className="font-mono-key text-[10px] tracking-widest text-gray-500 mb-2">/ {String(i + 1).padStart(2, "0")}</div>
-                <h3 className="font-display text-xl mb-3">{f.title}</h3>
-                <p className="text-sm text-gray-400 leading-relaxed">{f.body}</p>
+              <div key={i} className="glass-card p-7 hover:border-[var(--accent)]/30 transition-all duration-300 hover:-translate-y-1">
+                <div className="w-11 h-11 rounded-2xl bg-[var(--accent)]/10 flex items-center justify-center mb-5">
+                  <f.icon size={18} className="text-[var(--accent)]" />
+                </div>
+                <h3 className="font-display text-xl mb-2.5">{f.title}</h3>
+                <p className="text-sm text-[var(--muted)] leading-relaxed">{f.body}</p>
               </div>
             ))}
           </div>
         </div>
       </section>
 
-      <section id="security" className="relative z-10 border-t border-white/10 bg-[#080808]">
+      <section id="security" className="relative z-10 border-t border-[var(--border)]">
         <div className="max-w-7xl mx-auto px-6 py-24 grid lg:grid-cols-2 gap-16">
           <div>
-            <div className="font-mono-key text-[10px] tracking-[0.3em] text-[#00FF66] mb-4">/ 02 — HOW IT WORKS</div>
+            <div className="text-xs text-[var(--accent)] mb-4 tracking-widest font-mono-key">/ 02 — كيف يعمل</div>
             <h2 className="font-display text-4xl lg:text-5xl mb-8">
-              مفاتيحك. جهازك. <br/>سيرفراتنا لا تستطيع التطفّل.
+              مفاتيحك. جهازك. <br/><span className="text-gradient-rose">سيرّك معك.</span>
             </h2>
-            <p className="text-gray-400 leading-relaxed text-base">
-              عند التسجيل، يولّد Cipher زوج مفاتيح RSA بحجم ٢٠٤٨ بت داخل متصفحك.
-              مفتاحك الخاص يُشفَّر بمفتاح AES-256 مشتق من كلمة المرور
-              (PBKDF2 بـ ٢٠٠ ألف دورة) قبل أن يغادر جهازك. السيرفر يحتفظ بالشيفرة فقط —
-              حتى لو أردنا قراءة رسائلك، لا نستطيع.
+            <p className="text-[var(--muted)] leading-relaxed text-base">
+              عند التسجيل، يولّد Cipher زوج مفاتيح RSA-2048 داخل متصفحك.
+              مفتاحك الخاص يُشفّر بمفتاح AES-256 مشتقّ من كلمة مرورك (PBKDF2 بـ ٢٠٠ ألف دورة)
+              قبل أن يغادر جهازك. السيرفر يحتفظ بالشيفرة فقط — لو أردنا قراءة رسائلك،
+              لا نستطيع. هذا وعد رياضي، ليس فقط سياسة خصوصية.
             </p>
           </div>
 
-          <div className="border border-white/10 font-mono-key text-xs">
+          <div className="glass-card font-mono-key text-xs">
             {specs.map((s, i) => (
-              <div key={i} className="flex justify-between items-center p-5 border-b border-white/10 last:border-b-0">
-                <span className="text-gray-500 tracking-widest">{s.label}</span>
-                <span className="text-[#00FF66]">{s.value}</span>
+              <div key={i} className="flex justify-between items-center px-6 py-5 border-b border-[var(--border)] last:border-b-0">
+                <span className="text-[var(--muted)] tracking-widest">{s.label}</span>
+                <span className="text-[var(--accent)]">{s.value}</span>
               </div>
             ))}
           </div>
         </div>
       </section>
 
-      <section className="relative z-10 border-t border-white/10">
+      <section className="relative z-10 border-t border-[var(--border)]">
         <div className="max-w-7xl mx-auto px-6 py-24 text-center">
+          <Heart className="mx-auto text-[var(--accent)] mb-6 heart-pulse" size={40} fill="currentColor" />
           <h2 className="font-display text-4xl lg:text-6xl mb-6">
-            أنشئ سيرفر. ادعُ فريقك.
+            ابدأ مساحتك الآن.
           </h2>
-          <p className="text-gray-400 mb-10 max-w-xl mx-auto">
-            بدون أرقام هواتف. بدون تتبّع. مجرّد محادثات مشفّرة.
+          <p className="text-[var(--muted)] mb-10 max-w-xl mx-auto">
+            بدون أرقام هواتف. بدون تتبّع. مجرّد محادثات صادقة.
           </p>
           <Link to="/register" data-testid="footer-cta-btn"
-            className="inline-flex items-center gap-2 bg-[#00FF66] text-black px-8 py-4 font-medium hover:bg-white transition-colors">
-            احجز اسمك
+            className="btn-rose inline-flex items-center gap-2 px-8 py-4 text-base">
+            انضم إلينا
             <ArrowLeft size={16} />
           </Link>
         </div>
       </section>
 
-      <footer className="relative z-10 border-t border-white/10">
-        <div className="max-w-7xl mx-auto px-6 py-8 flex items-center justify-between text-xs text-gray-500">
-          <span className="font-mono-key">CIPHER © 2026 — ALL MESSAGES ENCRYPTED</span>
-          <span>صُمِّم للخصوصية</span>
+      <footer className="relative z-10 border-t border-[var(--border)]">
+        <div className="max-w-7xl mx-auto px-6 py-8 flex items-center justify-between text-xs text-[var(--muted-soft)]">
+          <span className="font-mono-key">CIPHER © 2026 · مشفّر بالكامل</span>
+          <span>صُمِّم بحب 🌹</span>
         </div>
       </footer>
     </div>
@@ -173,12 +173,12 @@ export default function Landing() {
 }
 
 const features = [
-  { icon: Lock, title: "رسائل خاصة مشفّرة", body: "الرسائل الخاصة تُشفَّر بالمفتاح العام للمستلم. هو فقط من يستطيع فكّها — ليس نحن، ولا أي طرف آخر." },
-  { icon: KeyRound, title: "توليد المفاتيح في جهازك", body: "أزواج مفاتيح RSA-OAEP بحجم ٢٠٤٨ بت تُولّد في متصفحك عبر Web Crypto API. مفاتيحك الخاصة لا تصل سيرفراتنا أبداً بصيغة قابلة للقراءة." },
-  { icon: Fingerprint, title: "مصادقة ثنائية", body: "حماية TOTP عبر أي تطبيق مصادقة. مع كلمة المرور = حصن منيع لحسابك." },
-  { icon: Eye, title: "سجل الجلسات والأجهزة", body: "كل تسجيل دخول، كل جهاز، مُسجَّل. اكتشف الاختراق فوراً واحذف الجلسات المريبة." },
-  { icon: Users, title: "سيرفرات وقنوات", body: "نظّم فرقك في سيرفرات، مثل ديسكورد. أنشئ قنوات نصية، ادعُ أعضاء، شارك الملفات — كل شيء بسجل كامل." },
-  { icon: Shield, title: "تصميم بدون معرفة", body: "نحفظ الشيفرة فقط. لو نسيت كلمة مرورك، يضيع مفتاحك للأبد. هذا ثمن الخصوصية الحقيقية." },
+  { icon: Lock, title: "رسائل مشفّرة", body: "كل رسالة خاصة تُشفّر بالمفتاح العام للمستلم. هو فقط من يستطيع قراءتها." },
+  { icon: KeyRound, title: "مفاتيحك في جهازك", body: "أزواج RSA 2048-بت تُولّد في متصفحك. مفاتيحك الخاصة لا تصل سيرفراتنا أبداً." },
+  { icon: Fingerprint, title: "حماية إضافية", body: "مصادقة ثنائية TOTP، سجل أجهزة، وبصمات تشفير لمنع الانتحال." },
+  { icon: Users, title: "سيرفرات وقنوات", body: "مساحات خاصة لمجموعاتك — قنوات نصية، إيموجيات مخصصة، ومكالمات." },
+  { icon: Eye, title: "مكالمات مشفّرة", body: "اتصالات صوت وفيديو ومشاركة شاشة P2P — تذهب مباشرة بين أجهزتكم." },
+  { icon: Heart, title: "بسيط ولطيف", body: "واجهة دافئة وسلسة، صُمّمت للأشخاص الذين يحبون بعضهم." },
 ];
 
 const specs = [

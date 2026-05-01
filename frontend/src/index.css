@@ -1,19 +1,25 @@
-@import url("https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@300;400;500;600&family=Tajawal:wght@300;400;500;700;900&family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=IBM+Plex+Mono:wght@300;400;500&family=Tajawal:wght@300;400;500;700;900&family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap");
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-    --bg: #0a0a0a;
-    --surface: #141414;
-    --surface-hover: #1f1f1f;
-    --border: rgba(255, 255, 255, 0.1);
-    --border-strong: rgba(255, 255, 255, 0.2);
-    --accent: #00ff66;
-    --muted: #888888;
-    --muted-fg: #a1a1a1;
-    --error: #ff3333;
+    --bg: #15101a;
+    --bg-soft: #1c1422;
+    --surface: #221823;
+    --surface-2: #2d1f30;
+    --surface-hover: #38253b;
+    --border: rgba(255, 200, 220, 0.08);
+    --border-strong: rgba(255, 200, 220, 0.16);
+    --accent: #ff5c8a;
+    --accent-soft: #ffb6cc;
+    --accent-deep: #d63d6f;
+    --secondary: #c77dff;
+    --text: #fbe9f0;
+    --muted: #b8a0aa;
+    --muted-soft: #8a7681;
+    --error: #ff7a8a;
 }
 
 html,
@@ -21,7 +27,7 @@ body,
 #root {
     height: 100%;
     background: var(--bg);
-    color: #ffffff;
+    color: var(--text);
 }
 
 html {
@@ -31,21 +37,36 @@ html {
 body {
     margin: 0;
     font-family:
-        "IBM Plex Sans Arabic", "Tajawal", "Work Sans", system-ui, sans-serif;
+        "IBM Plex Sans Arabic", "Tajawal", system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
+    background:
+        radial-gradient(
+            ellipse at 80% -10%,
+            rgba(255, 92, 138, 0.12),
+            transparent 50%
+        ),
+        radial-gradient(
+            ellipse at 10% 110%,
+            rgba(199, 125, 255, 0.08),
+            transparent 50%
+        ),
+        var(--bg);
+    min-height: 100vh;
 }
 
 .font-display {
-    font-family: "Tajawal", "Outfit", sans-serif;
+    font-family: "Tajawal", sans-serif;
     letter-spacing: -0.01em;
     font-weight: 700;
 }
 
 .font-display-en {
-    font-family: "Outfit", sans-serif;
-    letter-spacing: -0.02em;
+    font-family: "Cormorant Garamond", serif;
+    letter-spacing: 0.01em;
+    font-style: italic;
     direction: ltr;
     display: inline-block;
+    font-weight: 600;
 }
 
 .font-mono-key {
@@ -55,48 +76,46 @@ body {
     unicode-bidi: isolate;
 }
 
-/* Arabic uppercase replacement for tracking labels - keep tracking but no uppercase since Arabic doesn't have case */
-.label-ar {
-    font-family: "IBM Plex Sans Arabic", "Tajawal", sans-serif;
-    letter-spacing: 0;
+.label-soft {
     font-size: 11px;
     font-weight: 500;
-    color: rgb(156, 163, 175);
+    color: var(--muted-soft);
+    letter-spacing: 0.04em;
 }
 
 ::selection {
-    background: #00ff66;
-    color: #0a0a0a;
+    background: var(--accent);
+    color: #fff;
 }
 
 @layer base {
     :root {
-        --background: 0 0% 3.9%;
-        --foreground: 0 0% 98%;
-        --card: 0 0% 7.8%;
-        --card-foreground: 0 0% 98%;
-        --popover: 0 0% 7.8%;
-        --popover-foreground: 0 0% 98%;
-        --primary: 0 0% 98%;
-        --primary-foreground: 0 0% 9%;
-        --secondary: 0 0% 12%;
-        --secondary-foreground: 0 0% 98%;
-        --muted: 0 0% 12%;
-        --muted-foreground: 0 0% 63.9%;
-        --accent: 136 100% 50%;
-        --accent-foreground: 0 0% 4%;
-        --destructive: 0 100% 60%;
-        --destructive-foreground: 0 0% 98%;
-        --border: 0 0% 100%;
-        --input: 0 0% 14.9%;
-        --ring: 136 100% 50%;
-        --radius: 0.375rem;
+        --background: 270 26% 8%;
+        --foreground: 340 60% 95%;
+        --card: 280 20% 12%;
+        --card-foreground: 340 60% 95%;
+        --popover: 280 20% 12%;
+        --popover-foreground: 340 60% 95%;
+        --primary: 340 100% 68%;
+        --primary-foreground: 0 0% 100%;
+        --secondary: 280 30% 20%;
+        --secondary-foreground: 340 60% 95%;
+        --muted: 280 15% 18%;
+        --muted-foreground: 340 15% 70%;
+        --accent: 340 100% 68%;
+        --accent-foreground: 0 0% 100%;
+        --destructive: 350 90% 65%;
+        --destructive-foreground: 0 0% 100%;
+        --border: 340 30% 25%;
+        --input: 280 20% 18%;
+        --ring: 340 100% 68%;
+        --radius: 0.875rem;
     }
 }
 
 @layer base {
     * {
-        border-color: rgba(255, 255, 255, 0.1);
+        border-color: var(--border);
     }
 }
 
@@ -108,17 +127,17 @@ body {
     background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.15);
-    border-radius: 3px;
+    background: rgba(255, 92, 138, 0.18);
+    border-radius: 99px;
 }
 ::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.3);
+    background: rgba(255, 92, 138, 0.35);
 }
 
 @keyframes fadeInUp {
     from {
         opacity: 0;
-        transform: translateY(10px);
+        transform: translateY(8px);
     }
     to {
         opacity: 1;
@@ -126,35 +145,54 @@ body {
     }
 }
 .animate-chat-in {
-    animation: fadeInUp 200ms ease-out;
+    animation: fadeInUp 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 @keyframes pulseGlow {
     0%,
     100% {
-        box-shadow: 0 0 0 0 rgba(0, 255, 102, 0.4);
+        box-shadow: 0 0 0 0 rgba(255, 92, 138, 0.4);
     }
     50% {
-        box-shadow: 0 0 0 6px rgba(0, 255, 102, 0);
+        box-shadow: 0 0 0 8px rgba(255, 92, 138, 0);
     }
 }
 .pulse-dot {
     animation: pulseGlow 2s infinite;
 }
 
-.grid-lines {
-    background-image:
-        linear-gradient(
-            to right,
-            rgba(255, 255, 255, 0.04) 1px,
-            transparent 1px
-        ),
-        linear-gradient(
-            to bottom,
-            rgba(255, 255, 255, 0.04) 1px,
-            transparent 1px
-        );
-    background-size: 48px 48px;
+@keyframes float-blob {
+    0%,
+    100% {
+        transform: translate(0, 0) scale(1);
+    }
+    50% {
+        transform: translate(20px, -30px) scale(1.05);
+    }
+}
+.float-blob {
+    animation: float-blob 14s ease-in-out infinite;
+}
+
+.gradient-rose {
+    background: linear-gradient(135deg, #ff5c8a 0%, #c77dff 100%);
+}
+.text-gradient-rose {
+    background: linear-gradient(135deg, #ff5c8a, #ffb6cc, #c77dff);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
+
+.glass-card {
+    background: linear-gradient(
+        135deg,
+        rgba(255, 200, 220, 0.04),
+        rgba(199, 125, 255, 0.02)
+    );
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--border);
+    border-radius: 20px;
 }
 
 /* Inline emoji image used in message content */
@@ -167,7 +205,63 @@ body {
     margin: 0 1px;
 }
 
-/* RTL: lucide arrow icons should not flip */
+.btn-rose {
+    background: linear-gradient(135deg, #ff5c8a 0%, #d63d6f 100%);
+    color: #fff;
+    border-radius: 999px;
+    transition: all 0.25s ease;
+    box-shadow: 0 8px 24px rgba(255, 92, 138, 0.25);
+}
+.btn-rose:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 12px 32px rgba(255, 92, 138, 0.4);
+}
+
+.btn-soft {
+    background: rgba(255, 200, 220, 0.06);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    transition: all 0.2s ease;
+}
+.btn-soft:hover {
+    background: rgba(255, 200, 220, 0.1);
+    border-color: var(--accent);
+}
+
+.input-soft {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    color: var(--text);
+    transition: all 0.2s ease;
+}
+.input-soft:focus {
+    outline: none;
+    border-color: var(--accent);
+    background: rgba(255, 92, 138, 0.04);
+    box-shadow: 0 0 0 3px rgba(255, 92, 138, 0.1);
+}
+
+.heart-pulse {
+    animation: heartbeat 1.6s infinite;
+}
+@keyframes heartbeat {
+    0%,
+    100% {
+        transform: scale(1);
+    }
+    25% {
+        transform: scale(1.15);
+    }
+    40% {
+        transform: scale(1);
+    }
+    60% {
+        transform: scale(1.1);
+    }
+}
+
 [data-keep-ltr] {
     direction: ltr;
     unicode-bidi: isolate;

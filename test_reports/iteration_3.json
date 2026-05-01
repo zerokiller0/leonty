@@ -1,0 +1,45 @@
+{
+  "summary": "Cipher backend iteration 3 — WebRTC signaling endpoints (/api/calls/signal POST, /api/calls/signals GET). 9/9 new pytest tests PASSED on the public URL, and all 31 regression tests from iterations 1 & 2 continue to pass (40/40 total). All review spec items are covered: signal POST/retrieve round-trip for offer/answer/candidate/hangup, embedded from_user {id, display_name, username}, per-recipient scoping (A→B NOT visible to C), FIFO created_at ordering, delete-after-read semantics, 404 for non-existent recipient, and 401 for unauthenticated POST/GET.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/calls/signal", "issue": "`type` accepts any string (offer|answer|candidate|hangup|ringing are only in a code comment). Consider Literal[...] / enum validation to reject arbitrary types like 'pwn' which currently get stored."},
+      {"endpoint": "POST /api/calls/signal", "issue": "No rate limit / size check on `payload` dict. A malicious client could POST very large SDP/candidate payloads and fill the signals collection (mitigated only by 3600s TTL)."},
+      {"endpoint": "POST /api/calls/signal", "issue": "Self-signaling is allowed (to_user_id == caller). Worth rejecting with 400 to prevent loopback noise."},
+      {"endpoint": "GET /api/calls/signals", "issue": "Read-then-delete is not atomic (find → delete_many). Two concurrent GETs from the same user could each return the same batch before either delete lands. Consider find_one_and_delete loop or transactional delete on matched ids. Low risk in practice because the same user typically only polls from one browser tab."},
+      {"endpoint": "GET /api/calls/signals", "issue": "Hard cap of .to_list(100) with no pagination — burst of >100 ICE candidates in a single tick would leave the overflow in DB until next poll. Reasonable for MVP."},
+      {"endpoint": "POST /api/calls/signal", "issue": "`call_id` is free-form client-supplied and never validated as UUID — a client can collide call_ids across peers. Minor, but consider enforcing uuid format."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_calls_signaling.py",
+    "/app/backend/tests/test_cipher_backend.py",
+    "/app/backend/tests/test_guest_and_emojis.py",
+    "/app/test_reports/pytest/pytest_iter3_signaling.xml",
+    "/app/test_reports/pytest/pytest_iter3_all.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: tighten CallSignalIn.type to Literal['offer','answer','candidate','hangup','ringing'] to reject bad types at pydantic layer.",
+    "OPTIONAL: reject self-signaling with 400 (body.to_user_id == user['id']).",
+    "OPTIONAL: enforce payload size limit (e.g., < 64KB) on /calls/signal.",
+    "OPTIONAL: make read-and-delete in /calls/signals atomic using find_one_and_delete in a loop or a session/transaction to avoid duplicate delivery under concurrent polling.",
+    "OPTIONAL: add long-polling or WebSocket so clients don't hammer /calls/signals — current REST polling design will have ~1-2s signaling latency minimum."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 793 lines — crossed the 700-line threshold flagged in iterations 1 & 2. Strongly recommend splitting into routers/ (auth, guest, servers, emojis, dms, files, calls) before iteration 4.",
+    "Signaling correctness: from_user embed, to_user_id scoping filter, _id projection, ISO string created_at and TTL index (3600s) on signals.created_at — all verified.",
+    "Index on signals.to_user_id is created in startup; good for the hot-path poll query.",
+    "Delete-after-read semantics behave correctly (verified: subsequent GET returns empty for the consumed batch).",
+    "404 is returned for unknown to_user_id before the insert, so orphan signals cannot accumulate (verified).",
+    "No XSS/escape concern on payload because payload is JSON dict passed through verbatim (SDP/candidate strings are opaque to the server)."
+  ],
+  "updated_files": ["/app/backend/tests/test_calls_signaling.py"],
+  "success_rate": {"backend": "100% (40/40 overall — 9/9 new signaling + 31/31 regression)", "frontend": "not tested (backend-only request per review_request.testing_type)"},
+  "test_credentials": "Admin: admin@cipher.io / Admin@Cipher2026 (not used here). Tests register their own TEST_call* users via /api/auth/register.",
+  "seed_data_creation": "Tests create ~14 TEST_call* users (two per round-trip test plus three for the scoping test). Signals are auto-pruned by the 3600s TTL and by the read-delete behavior of the endpoint itself.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run: `pytest /app/backend/tests/ -v` — 40 tests, ~108s. New signaling tests live in /app/backend/tests/test_calls_signaling.py. The signaling transport is REST polling (no WebSocket), so any frontend iteration must poll /api/calls/signals. Signals are auto-deleted on read — two simultaneous GETs from the same user will race. If a 'ringing' event or WebSocket upgrade is introduced next, extend this file. TTL = 3600s on signals.created_at.",
+  "rca of the issue": "N/A — no backend bugs. All 9 new endpoint tests and all 31 regression tests pass against the public URL https://team-secure.preview.emergentagent.com/api."
+}
