@@ -212,6 +212,18 @@ def test_list_server_emojis_includes_kind():
     assert by_name["beta_st"].get("kind") == "sticker", by_name["beta_st"]
 
 
+def test_upload_default_kind_is_emoji():
+    """When `kind` param is omitted, server should default to kind='emoji'."""
+    s, _, *_ = _register_user("def")
+    sv = _create_server(s)
+    name = _unique("def")
+    files = {"file": ("e.png", io.BytesIO(_make_png()), "image/png")}
+    r = s.post(f"{API}/servers/{sv['id']}/emojis", params={"name": name}, files=files)
+    assert r.status_code == 200, f"default-kind upload failed: {r.status_code} {r.text}"
+    e = r.json()["emoji"]
+    assert e.get("kind") == "emoji", f"default kind should be 'emoji', got: {e}"
+
+
 def test_list_my_emojis_includes_kind():
     s, _, *_ = _register_user("lstmy")
     sv = _create_server(s)

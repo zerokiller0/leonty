@@ -645,7 +645,7 @@ async def get_file_meta(file_id: str, user: dict = Depends(get_current_user)):
 
 # ---------- Emojis ----------
 @api.post("/servers/{server_id}/emojis")
-async def upload_emoji(server_id: str, name: str, file: UploadFile = File(...),
+async def upload_emoji(server_id: str, name: str, kind: str = "emoji", file: UploadFile = File(...),
                        user: dict = Depends(get_current_user)):
     s = await db.servers.find_one({"id": server_id, "members": user["id"]}, {"_id": 0})
     if not s:
@@ -653,19 +653,23 @@ async def upload_emoji(server_id: str, name: str, file: UploadFile = File(...),
     name = name.strip().lower().replace(" ", "_")
     if not name or len(name) > 32:
         raise HTTPException(400, "Invalid emoji name")
-    if await db.emojis.find_one({"server_id": server_id, "name": name}):
-        raise HTTPException(400, "Emoji name already used in this server")
+    if kind not in ("emoji", "sticker"):
+        raise HTTPException(400, "kind must be emoji or sticker")
+    if await db.emojis.find_one({"server_id": server_id, "name": name, "kind": kind}):
+        raise HTTPException(400, "Name already used in this server")
     fid = str(uuid.uuid4())
     path = UPLOAD_DIR / fid
     content = await file.read()
-    if len(content) > 512 * 1024:
-        raise HTTPException(400, "Emoji must be under 512KB")
+    max_size = 1024 * 1024 if kind == "sticker" else 512 * 1024
+    if len(content) > max_size:
+        raise HTTPException(400, f"{kind} must be under {max_size // 1024}KB")
     with open(path, "wb") as f:
         f.write(content)
     rec = {
         "id": fid,
         "server_id": server_id,
         "name": name,
+        "kind": kind,
         "uploader_id": user["id"],
         "content_type": file.content_type or "image/png",
         "created_at": now_utc().isoformat(),
@@ -680,6 +684,8 @@ async def list_server_emojis(server_id: str, user: dict = Depends(get_current_us
     if not s:
         raise HTTPException(404, "Server not found")
     items = await db.emojis.find({"server_id": server_id}, {"_id": 0}).sort("created_at", 1).to_list(500)
+    for e in items:
+        e.setdefault("kind", "emoji")
     return {"emojis": items}
 
 @api.get("/emojis")
@@ -690,6 +696,7 @@ async def list_my_emojis(user: dict = Depends(get_current_user)):
     items = await db.emojis.find({"server_id": {"$in": list(sid_map.keys())}}, {"_id": 0}).sort("created_at", -1).to_list(1000)
     for e in items:
         e["server_name"] = sid_map.get(e["server_id"], "")
+        e.setdefault("kind", "emoji")
     return {"emojis": items}
 
 @api.delete("/servers/{server_id}/emojis/{emoji_id}")
