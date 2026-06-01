@@ -10,7 +10,7 @@ import VoiceCall from "../components/VoiceCall";
 import WatchTogether from "../components/WatchTogether";
 import {
   Heart, Plus, Hash, Settings as SettingsIcon, LogOut, Search, Send,
-  MessageCircle, Copy, X, Smile, Trash2, ImagePlus, Phone, Video,
+  Lock, MessageCircle, Copy, X, Smile, Trash2, ImagePlus, Phone, Video,
   Film, Sticker as StickerIcon, Calendar, Paperclip, Download, FileIcon, Image as ImageIcon,
   UserPlus, Check, UserX,
 } from "lucide-react";
@@ -289,20 +289,39 @@ export default function Workspace() {
           ) : (
             <>
               <div className="flex items-center justify-between px-2 py-2">
-                <span className="label-soft">مباشر · مشفّر</span>
-                <button data-testid="new-dm-btn" onClick={() => setShowDmSearch(true)}
-                  className="text-[var(--muted)] hover:text-[var(--accent)] w-6 h-6 rounded-full hover:bg-white/5 flex items-center justify-center">
-                  <Plus size={12} />
-                </button>
+                <span className="label-soft">الأصدقاء والرسائل</span>
+                <div className="flex items-center gap-1">
+                  <button data-testid="open-friends-btn" onClick={() => setShowFriendsModal(true)}
+                    title="الأصدقاء" className="relative text-[var(--muted)] hover:text-[var(--accent)] w-6 h-6 rounded-full hover:bg-white/5 flex items-center justify-center">
+                    <UserPlus size={12} />
+                    {friendRequestCount > 0 && (
+                      <span className="absolute -top-1 -left-1 min-w-[14px] h-3.5 rounded-full bg-[var(--error)] text-white text-[9px] font-bold flex items-center justify-center px-1">
+                        {friendRequestCount > 9 ? "9+" : friendRequestCount}
+                      </span>
+                    )}
+                  </button>
+                  <button data-testid="new-dm-btn" onClick={() => setShowDmSearch(true)}
+                    className="text-[var(--muted)] hover:text-[var(--accent)] w-6 h-6 rounded-full hover:bg-white/5 flex items-center justify-center">
+                    <Plus size={12} />
+                  </button>
+                </div>
               </div>
               {dmConversations.map((c) => (
                 <button key={c.partner.id} data-testid={`dm-${c.partner.id}`} onClick={() => nav(`/app/dm/${c.partner.id}`)}
                   className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm rounded-2xl transition-colors ${
-                    c.partner.id === userId ? "bg-[var(--accent)]/15 text-white" : "text-[var(--muted)] hover:text-white hover:bg-white/5"
+                    c.partner.id === userId
+                      ? "bg-[var(--accent)]/15 text-white"
+                      : c.unread_count > 0
+                        ? "text-white font-medium hover:bg-white/5"
+                        : "text-[var(--muted)] hover:text-white hover:bg-white/5"
                   }`}>
                   <Avatar user={c.partner} size={32} />
                   <span className="truncate">{c.partner.display_name}</span>
-                  <Lock size={10} className="ms-auto text-[var(--accent)]" />
+                  {c.unread_count > 0 ? (
+                    <span data-testid={`unread-${c.partner.id}`} className="ms-auto px-1.5 min-w-[20px] h-5 rounded-full bg-[var(--error)] text-white text-[10px] font-bold flex items-center justify-center">
+                      {c.unread_count > 9 ? "9+" : c.unread_count}
+                    </span>
+                  ) : null}
                 </button>
               ))}
               {dmConversations.length === 0 && (
@@ -338,10 +357,6 @@ export default function Workspace() {
               <>
                 <Avatar user={dmPartner} size={36} />
                 <span className="font-display">{dmPartner.display_name}</span>
-                <div className="flex items-center gap-1 ms-2 px-2.5 py-1 rounded-full bg-[var(--accent)]/10 border border-[var(--accent)]/20">
-                  <Lock size={10} className="text-[var(--accent)]" />
-                  <span className="font-mono-key text-[10px] text-[var(--accent)]">E2EE</span>
-                </div>
               </>
             ) : (
               <span className="text-sm text-[var(--muted)]">اختر قناة أو محادثة خاصة</span>
@@ -533,6 +548,10 @@ export default function Workspace() {
       )}
       {showStickerPicker && (
         <StickerPickerModal onClose={() => setShowStickerPicker(false)} onPick={sendSticker} />
+      )}
+      {showFriendsModal && (
+        <FriendsModal me={user} onClose={() => { setShowFriendsModal(false); loadSidebar(); }}
+          onDM={(u) => { nav(`/app/dm/${u.id}`); setShowFriendsModal(false); }} />
       )}
       {callPartner && (
         <VoiceCall partner={callPartner} me={user}
@@ -841,5 +860,160 @@ function IncomingToast({ call, onAccept, onReject, icon, label }) {
         {icon}
       </button>
     </div>
+  );
+}
+ [q, setQ] = useState("");
+  const [results, setResults] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  const load = async () => {
+    const [f, p] = await Promise.all([api.get("/friends"), api.get("/friends/requests")]);
+    setFriends(f.data.friends);
+    setPending({ incoming: p.data.incoming, outgoing: p.data.outgoing });
+  };
+  useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    if (!q || tab !== "add") { setResults([]); return; }
+    const t = setTimeout(async () => {
+      try { const { data } = await api.get(`/users/search?q=${encodeURIComponent(q)}`); setResults(data.users); } catch {}
+    }, 250);
+    return () => clearTimeout(t);
+  }, [q, tab]);
+
+  const sendReq = async (uid) => {
+    setLoading(true);
+    try { await api.post("/friends/requests", { to_user_id: uid }); toast.success("تم إرسال طلب الصداقة"); await load(); }
+    catch (e) { toast.error(formatApiError(e)); }
+    finally { setLoading(false); }
+  };
+  const accept = async (id) => { try { await api.post(`/friends/requests/${id}/accept`); toast.success("تم القبول"); await load(); } catch (e) { toast.error(formatApiError(e)); } };
+  const decline = async (id) => { try { await api.post(`/friends/requests/${id}/decline`); await load(); } catch (e) { toast.error(formatApiError(e)); } };
+  const cancel = async (id) => { try { await api.delete(`/friends/requests/${id}`); await load(); } catch (e) { toast.error(formatApiError(e)); } };
+  const removeFriend = async (uid) => { if (!window.confirm("إزالة الصديق؟")) return; try { await api.delete(`/friends/${uid}`); await load(); } catch (e) { toast.error(formatApiError(e)); } };
+
+  const tabs = [
+    { k: "all", label: `الأصدقاء (${friends.length})` },
+    { k: "pending", label: `الطلبات (${pending.incoming.length + pending.outgoing.length})`, badge: pending.incoming.length },
+    { k: "add", label: "إضافة" },
+  ];
+
+  return (
+    <ModalShell wide title="الأصدقاء" onClose={onClose}>
+      <div className="flex gap-2 mb-5 flex-wrap">
+        {tabs.map((t) => (
+          <button key={t.k} onClick={() => setTab(t.k)} data-testid={`friends-tab-${t.k}`}
+            className={`relative px-4 py-2 rounded-full text-xs transition ${tab === t.k ? "gradient-rose text-white" : "btn-soft"}`}>
+            {t.label}
+            {t.badge > 0 && tab !== t.k && (
+              <span className="absolute -top-1 -left-1 min-w-[16px] h-4 rounded-full bg-[var(--error)] text-white text-[9px] font-bold flex items-center justify-center px-1">
+                {t.badge}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {tab === "all" && (
+        <div className="space-y-1 max-h-96 overflow-y-auto">
+          {friends.length === 0 ? (
+            <div className="text-center text-xs text-[var(--muted)] py-8">لا أصدقاء بعد. اضغط "إضافة" لتبدأ.</div>
+          ) : friends.map((u) => (
+            <div key={u.id} className="flex items-center gap-3 p-3 rounded-2xl hover:bg-white/5">
+              <Avatar user={u} size={40} />
+              <div className="min-w-0 flex-1">
+                <div className="text-sm truncate">{u.display_name}</div>
+                <div className="font-mono-key text-[10px] text-[var(--muted-soft)] truncate">@{u.username}</div>
+              </div>
+              <button onClick={() => onDM(u)} data-testid={`friend-dm-${u.id}`} title="رسالة"
+                className="w-9 h-9 rounded-full bg-[var(--surface)] hover:bg-[var(--accent)]/20 hover:text-[var(--accent)] flex items-center justify-center">
+                <MessageCircle size={14} />
+              </button>
+              <button onClick={() => removeFriend(u.id)} data-testid={`friend-remove-${u.id}`} title="إزالة"
+                className="w-9 h-9 rounded-full bg-[var(--surface)] hover:bg-[var(--error)]/20 hover:text-[var(--error)] flex items-center justify-center">
+                <UserX size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab === "pending" && (
+        <div className="space-y-4 max-h-96 overflow-y-auto">
+          {pending.incoming.length > 0 && (
+            <div>
+              <div className="label-soft mb-2">واردة ({pending.incoming.length})</div>
+              <div className="space-y-1">
+                {pending.incoming.map((r) => (
+                  <div key={r.id} data-testid={`pending-in-${r.id}`} className="flex items-center gap-3 p-3 rounded-2xl bg-[var(--surface)]">
+                    <Avatar user={r.from_user} size={40} />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm truncate">{r.from_user?.display_name}</div>
+                      <div className="font-mono-key text-[10px] text-[var(--muted-soft)] truncate">@{r.from_user?.username}</div>
+                    </div>
+                    <button onClick={() => accept(r.id)} data-testid={`accept-${r.id}`} title="قبول"
+                      className="w-9 h-9 rounded-full bg-[var(--accent)]/20 text-[var(--accent)] hover:bg-[var(--accent)] hover:text-white flex items-center justify-center">
+                      <Check size={14} />
+                    </button>
+                    <button onClick={() => decline(r.id)} data-testid={`decline-${r.id}`} title="رفض"
+                      className="w-9 h-9 rounded-full bg-[var(--error)]/20 text-[var(--error)] hover:bg-[var(--error)] hover:text-white flex items-center justify-center">
+                      <X size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {pending.outgoing.length > 0 && (
+            <div>
+              <div className="label-soft mb-2">مُرسَلة ({pending.outgoing.length})</div>
+              <div className="space-y-1">
+                {pending.outgoing.map((r) => (
+                  <div key={r.id} className="flex items-center gap-3 p-3 rounded-2xl bg-[var(--surface)] opacity-70">
+                    <Avatar user={r.to_user} size={40} />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm truncate">{r.to_user?.display_name}</div>
+                      <div className="text-[10px] text-[var(--muted-soft)]">بانتظار الموافقة</div>
+                    </div>
+                    <button onClick={() => cancel(r.id)} data-testid={`cancel-${r.id}`}
+                      className="text-xs text-[var(--muted)] hover:text-[var(--error)]">إلغاء</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {pending.incoming.length === 0 && pending.outgoing.length === 0 && (
+            <div className="text-center text-xs text-[var(--muted)] py-8">لا طلبات معلّقة</div>
+          )}
+        </div>
+      )}
+
+      {tab === "add" && (
+        <div>
+          <div className="flex items-center input-soft px-4 py-3 mb-4">
+            <Search size={14} className="text-[var(--muted)] me-2" />
+            <input data-testid="friend-search-input" autoFocus value={q} onChange={(e) => setQ(e.target.value)}
+              placeholder="ابحث باسم المستخدم أو البريد..."
+              className="flex-1 bg-transparent text-sm focus:outline-none" />
+          </div>
+          <div className="space-y-1 max-h-80 overflow-y-auto">
+            {results.filter(u => u.id !== me?.id).map((u) => (
+              <div key={u.id} className="flex items-center gap-3 p-3 rounded-2xl hover:bg-white/5">
+                <Avatar user={u} size={40} />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm truncate">{u.display_name}</div>
+                  <div className="font-mono-key text-[10px] text-[var(--muted-soft)] truncate">@{u.username}</div>
+                </div>
+                <button onClick={() => sendReq(u.id)} disabled={loading} data-testid={`send-req-${u.id}`}
+                  className="btn-rose px-4 py-2 text-xs flex items-center gap-1.5 disabled:opacity-50">
+                  <UserPlus size={12} /> إضافة
+                </button>
+              </div>
+            ))}
+            {q && results.length === 0 && <div className="text-xs text-[var(--muted)] p-3 text-center">لا نتائج</div>}
+          </div>
+        </div>
+      )}
+    </ModalShell>
   );
 }

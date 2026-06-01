@@ -539,7 +539,7 @@ async def list_messages(channel_id: str, user: dict = Depends(get_current_user))
         m["sender"] = umap.get(m["sender_id"])
     return {"messages": items}
 
-# ---------- Direct Messages (E2EE) ----------
+# ---------- Direct Messages ----------
 @api.post("/dms")
 async def send_dm(body: DMSendIn, user: dict = Depends(get_current_user)):
     recipient = await db.users.find_one({"id": body.recipient_id}, {"_id": 0})
@@ -551,8 +551,7 @@ async def send_dm(body: DMSendIn, user: dict = Depends(get_current_user)):
         "conversation_id": conv_id,
         "sender_id": user["id"],
         "recipient_id": body.recipient_id,
-        "sender_ciphertext": body.sender_ciphertext,
-        "recipient_ciphertext": body.recipient_ciphertext,
+        "content": body.content,
         "attachment_id": body.attachment_id,
         "created_at": now_utc().isoformat(),
     }
@@ -564,29 +563,149 @@ async def send_dm(body: DMSendIn, user: dict = Depends(get_current_user)):
 async def get_dms(user_id: str, user: dict = Depends(get_current_user)):
     conv_id = "_".join(sorted([user["id"], user_id]))
     items = await db.dms.find({"conversation_id": conv_id}, {"_id": 0}).sort("created_at", 1).to_list(500)
+    await db.dm_reads.update_one(
+        {"user_id": user["id"], "conversation_id": conv_id},
+        {"$set": {"last_read_at": now_utc().isoformat()}},
+        upsert=True,
+    )
     return {"messages": items}
+
+@api.post("/dms/{user_id}/read")
+async def mark_dm_read(user_id: str, user: dict = Depends(get_current_user)):
+    conv_id = "_".join(sorted([user["id"], user_id]))
+    await db.dm_reads.update_one(
+        {"user_id": user["id"], "conversation_id": conv_id},
+        {"$set": {"last_read_at": now_utc().isoformat()}},
+        upsert=True,
+    )
+    return {"ok": True}
 
 @api.get("/dms")
 async def list_conversations(user: dict = Depends(get_current_user)):
-    # aggregate
     pipeline = [
         {"$match": {"$or": [{"sender_id": user["id"]}, {"recipient_id": user["id"]}]}},
         {"$sort": {"created_at": -1}},
-        {"$group": {
-            "_id": "$conversation_id",
-            "last": {"$first": "$$ROOT"},
-        }},
+        {"$group": {"_id": "$conversation_id", "last": {"$first": "$$ROOT"}}},
     ]
+    reads_cursor = db.dm_reads.find({"user_id": user["id"]}, {"_id": 0})
+    reads = {r["conversation_id"]: r["last_read_at"] async for r in reads_cursor}
     convs = []
     async for row in db.dms.aggregate(pipeline):
-        partner_id = row["last"]["recipient_id"] if row["last"]["sender_id"] == user["id"] else row["last"]["sender_id"]
+        last = row["last"]
+        partner_id = last["recipient_id"] if last["sender_id"] == user["id"] else last["sender_id"]
         partner = await db.users.find_one({"id": partner_id}, {"_id": 0})
-        if partner:
-            convs.append({
-                "partner": public_user(partner),
-                "last_message_at": row["last"]["created_at"],
-            })
+        if not partner:
+            continue
+        last_read = reads.get(last["conversation_id"], "1970-01-01T00:00:00")
+        unread = await db.dms.count_documents({
+            "conversation_id": last["conversation_id"],
+            "recipient_id": user["id"],
+            "created_at": {"$gt": last_read},
+        })
+        convs.append({
+            "partner": public_user(partner),
+            "last_message_at": last["created_at"],
+            "last_message_preview": (last.get("content") or "")[:80],
+            "unread_count": unread,
+        })
     return {"conversations": convs}
+
+# ---------- Friends ----------
+@api.post("/friends/requests")
+async def send_friend_request(body: FriendRequestIn, user: dict = Depends(get_current_user)):
+    if body.to_user_id == user["id"]:
+        raise HTTPException(400, "لا يمكن إضافة نفسك")
+    target = await db.users.find_one({"id": body.to_user_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(404, "المستخدم غير موجود")
+    existing = await db.friendships.find_one({
+        "$or": [
+            {"user_a": user["id"], "user_b": body.to_user_id},
+            {"user_a": body.to_user_id, "user_b": user["id"]},
+        ],
+    }, {"_id": 0})
+    if existing:
+        raise HTTPException(400, "أنتما أصدقاء بالفعل")
+    pending = await db.friend_requests.find_one({
+        "$or": [
+            {"from_user_id": user["id"], "to_user_id": body.to_user_id},
+            {"from_user_id": body.to_user_id, "to_user_id": user["id"]},
+        ],
+        "status": "pending",
+    }, {"_id": 0})
+    if pending:
+        raise HTTPException(400, "هناك طلب صداقة معلّق")
+    req = {
+        "id": str(uuid.uuid4()),
+        "from_user_id": user["id"],
+        "to_user_id": body.to_user_id,
+        "status": "pending",
+        "created_at": now_utc().isoformat(),
+    }
+    await db.friend_requests.insert_one(req)
+    req.pop("_id", None)
+    return {"request": req}
+
+@api.get("/friends/requests")
+async def list_friend_requests(user: dict = Depends(get_current_user)):
+    incoming = await db.friend_requests.find(
+        {"to_user_id": user["id"], "status": "pending"}, {"_id": 0}
+    ).sort("created_at", -1).to_list(200)
+    outgoing = await db.friend_requests.find(
+        {"from_user_id": user["id"], "status": "pending"}, {"_id": 0}
+    ).sort("created_at", -1).to_list(200)
+    user_ids = list({*[r["from_user_id"] for r in incoming], *[r["to_user_id"] for r in outgoing]})
+    users = await db.users.find({"id": {"$in": user_ids}}, {"_id": 0}).to_list(500)
+    umap = {u["id"]: public_user(u) for u in users}
+    for r in incoming:
+        r["from_user"] = umap.get(r["from_user_id"])
+    for r in outgoing:
+        r["to_user"] = umap.get(r["to_user_id"])
+    return {"incoming": incoming, "outgoing": outgoing}
+
+@api.post("/friends/requests/{request_id}/accept")
+async def accept_friend(request_id: str, user: dict = Depends(get_current_user)):
+    req = await db.friend_requests.find_one({"id": request_id, "to_user_id": user["id"], "status": "pending"}, {"_id": 0})
+    if not req:
+        raise HTTPException(404, "طلب غير موجود")
+    await db.friend_requests.update_one({"id": request_id}, {"$set": {"status": "accepted"}})
+    pair = sorted([req["from_user_id"], req["to_user_id"]])
+    await db.friendships.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_a": pair[0], "user_b": pair[1],
+        "created_at": now_utc().isoformat(),
+    })
+    return {"ok": True}
+
+@api.post("/friends/requests/{request_id}/decline")
+async def decline_friend(request_id: str, user: dict = Depends(get_current_user)):
+    req = await db.friend_requests.find_one({"id": request_id, "to_user_id": user["id"], "status": "pending"}, {"_id": 0})
+    if not req:
+        raise HTTPException(404, "طلب غير موجود")
+    await db.friend_requests.update_one({"id": request_id}, {"$set": {"status": "declined"}})
+    return {"ok": True}
+
+@api.delete("/friends/requests/{request_id}")
+async def cancel_friend_request(request_id: str, user: dict = Depends(get_current_user)):
+    res = await db.friend_requests.delete_one({"id": request_id, "from_user_id": user["id"], "status": "pending"})
+    if res.deleted_count == 0:
+        raise HTTPException(404, "غير موجود")
+    return {"ok": True}
+
+@api.get("/friends")
+async def list_friends(user: dict = Depends(get_current_user)):
+    fs = await db.friendships.find(
+        {"$or": [{"user_a": user["id"]}, {"user_b": user["id"]}]}, {"_id": 0}
+    ).to_list(500)
+    friend_ids = [f["user_b"] if f["user_a"] == user["id"] else f["user_a"] for f in fs]
+    users = await db.users.find({"id": {"$in": friend_ids}}, {"_id": 0}).to_list(500)
+    return {"friends": [public_user(u) for u in users]}
+
+@api.delete("/friends/{user_id}")
+async def remove_friend(user_id: str, user: dict = Depends(get_current_user)):
+    pair = sorted([user["id"], user_id])
+    await db.friendships.delete_many({"user_a": pair[0], "user_b": pair[1]})
+    return {"ok": True}
 
 # ---------- Files ----------
 MAX_UPLOAD_SIZE = 2 * 1024 * 1024 * 1024  # 2 GB
@@ -794,135 +913,6 @@ async def startup():
     await db.friend_requests.create_index("from_user_id")
     await db.friend_requests.create_index("to_user_id")
     await db.friendships.create_index([("user_a", 1), ("user_b", 1)], unique=True)
-    # Admin user with placeholder keys (admin must re-register or setup keys via UI on first login)
-    admin_email = os.environ.get("ADMIN_EMAIL", "admin@cipher.io")
-    admin_pw = os.environ.get("ADMIN_PASSWORD", "Admin@Cipher2026")
-    existing = await db.users.find_one({"email": admin_email})
-    if not existing:
-        uid = str(uuid.uuid4())
-        await db.users.insert_one({
-            "id": uid,
-            "email": admin_email,
-            "username": "admin",
-            "display_name": "Admin",
-            "avatar_url": None,
-            "password_hash": hash_password(admin_pw),
-            "public_key": "PENDING",
-            "encrypted_private_key": "PENDING",
-            "key_salt": "PENDING",
-            "two_factor_secret": None,
-            "created_at": now_utc().isoformat(),
-            "role": "admin",
-        })
-        logger.info(f"Seeded admin user: {admin_email}")
-
-@app.on_event("shutdown")
-async def shutdown():
-    client.close()
-   return {"emojis": items}
-
-@api.get("/emojis")
-async def list_my_emojis(user: dict = Depends(get_current_user)):
-    # All emojis from servers the user is a member of
-    servers = await db.servers.find({"members": user["id"]}, {"_id": 0, "id": 1, "name": 1}).to_list(500)
-    sid_map = {s["id"]: s["name"] for s in servers}
-    items = await db.emojis.find({"server_id": {"$in": list(sid_map.keys())}}, {"_id": 0}).sort("created_at", -1).to_list(1000)
-    for e in items:
-        e["server_name"] = sid_map.get(e["server_id"], "")
-        e.setdefault("kind", "emoji")
-    return {"emojis": items}
-
-@api.delete("/servers/{server_id}/emojis/{emoji_id}")
-async def delete_emoji(server_id: str, emoji_id: str, user: dict = Depends(get_current_user)):
-    s = await db.servers.find_one({"id": server_id, "members": user["id"]}, {"_id": 0})
-    if not s:
-        raise HTTPException(404, "Server not found")
-    emoji = await db.emojis.find_one({"id": emoji_id, "server_id": server_id}, {"_id": 0})
-    if not emoji:
-        raise HTTPException(404, "Not found")
-    if emoji["uploader_id"] != user["id"] and s["owner_id"] != user["id"]:
-        raise HTTPException(403, "Not allowed")
-    await db.emojis.delete_one({"id": emoji_id})
-    try:
-        (UPLOAD_DIR / emoji_id).unlink(missing_ok=True)
-    except Exception:
-        pass
-    return {"ok": True}
-
-@api.get("/emojis/{emoji_id}/image")
-async def get_emoji_image(emoji_id: str, user: dict = Depends(get_current_user)):
-    rec = await db.emojis.find_one({"id": emoji_id}, {"_id": 0})
-    if not rec:
-        raise HTTPException(404, "Not found")
-    path = UPLOAD_DIR / emoji_id
-    if not path.exists():
-        raise HTTPException(404, "Missing")
-    def iterfile():
-        with open(path, "rb") as f:
-            yield from f
-    return StreamingResponse(iterfile(), media_type=rec["content_type"])
-
-# ---------- Calls (WebRTC signaling) ----------
-@api.post("/calls/signal")
-async def call_signal(body: CallSignalIn, user: dict = Depends(get_current_user)):
-    target = await db.users.find_one({"id": body.to_user_id}, {"_id": 0})
-    if not target:
-        raise HTTPException(404, "Not found")
-    sig = {
-        "id": str(uuid.uuid4()),
-        "from_user_id": user["id"],
-        "from_user": {"id": user["id"], "display_name": user.get("display_name"), "username": user.get("username")},
-        "to_user_id": body.to_user_id,
-        "type": body.type,
-        "payload": body.payload,
-        "call_id": body.call_id,
-        "created_at": now_utc().isoformat(),
-    }
-    await db.signals.insert_one(sig)
-    return {"ok": True}
-
-@api.get("/calls/signals")
-async def get_signals(user: dict = Depends(get_current_user)):
-    items = await db.signals.find({"to_user_id": user["id"]}, {"_id": 0}).sort("created_at", 1).to_list(100)
-    if items:
-        ids = [i["id"] for i in items]
-        await db.signals.delete_many({"id": {"$in": ids}})
-    return {"signals": items}
-
-# ---------- Health ----------
-@api.get("/")
-async def root():
-    return {"app": "Leonty", "status": "ok"}
-
-app.include_router(api)
-
-# CORS: for credentialed cookies we need explicit origins — but frontend uses same host via ingress so same-origin. Keep permissive for preview.
-cors_origins = os.environ.get("CORS_ORIGINS", "*").split(",")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=cors_origins if cors_origins != ["*"] else ["*"],
-    allow_credentials=True if cors_origins != ["*"] else False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-@app.on_event("startup")
-async def startup():
-    await db.users.create_index("email", unique=True)
-    await db.users.create_index("username", unique=True)
-    await db.users.create_index("id", unique=True)
-    await db.servers.create_index("id", unique=True)
-    await db.servers.create_index("invite_code", unique=True)
-    await db.channels.create_index("id", unique=True)
-    await db.channels.create_index("server_id")
-    await db.messages.create_index("channel_id")
-    await db.dms.create_index("conversation_id")
-    await db.sessions.create_index("user_id")
-    await db.signals.create_index("to_user_id")
-    await db.signals.create_index([("created_at", 1)], expireAfterSeconds=3600)
     # Admin user with placeholder keys (admin must re-register or setup keys via UI on first login)
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@cipher.io")
     admin_pw = os.environ.get("ADMIN_PASSWORD", "Admin@Cipher2026")
