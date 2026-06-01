@@ -86,7 +86,6 @@ def public_user(u: dict) -> dict:
         "avatar_url": u.get("avatar_url"),
         "about_me": u.get("about_me", ""),
         "status": u.get("status", "online"),
-        "public_key": u.get("public_key"),
         "two_factor_enabled": bool(u.get("two_factor_secret")),
         "is_guest": bool(u.get("is_guest", False)),
         "created_at": iso(u.get("created_at")),
@@ -119,9 +118,6 @@ class RegisterIn(BaseModel):
     password: str
     username: str
     display_name: Optional[str] = None
-    public_key: str  # PEM encoded RSA public key (client-side generated)
-    encrypted_private_key: str  # Private key encrypted with password-derived AES key
-    key_salt: str  # Salt used for PBKDF2 on client
 
 class LoginIn(BaseModel):
     email: EmailStr
@@ -161,10 +157,7 @@ class JoinServerIn(BaseModel):
     invite_code: str
 
 class GuestRegisterIn(BaseModel):
-    public_key: str
-    encrypted_private_key: str
-    key_salt: str
-    recovery_code: str  # client-generated; used as password & for key encryption
+    recovery_code: str  # client-generated; used as password
     display_name: Optional[str] = None
 
 class GuestLoginIn(BaseModel):
@@ -174,8 +167,6 @@ class GuestLoginIn(BaseModel):
 class UpgradeAccountIn(BaseModel):
     email: EmailStr
     password: str
-    encrypted_private_key: str
-    key_salt: str
 
 class CallSignalIn(BaseModel):
     to_user_id: str
@@ -199,9 +190,6 @@ async def register(body: RegisterIn, request: Request, response: Response):
         "display_name": body.display_name or body.username,
         "avatar_url": None,
         "password_hash": hash_password(body.password),
-        "public_key": body.public_key,
-        "encrypted_private_key": body.encrypted_private_key,
-        "key_salt": body.key_salt,
         "two_factor_secret": None,
         "created_at": now_utc().isoformat(),
     }
@@ -210,8 +198,7 @@ async def register(body: RegisterIn, request: Request, response: Response):
     access = create_access(uid, email)
     refresh = create_refresh(uid)
     set_auth_cookies(response, access, refresh)
-    return {"user": public_user(user), "access_token": access,
-            "encrypted_private_key": body.encrypted_private_key, "key_salt": body.key_salt}
+    return {"user": public_user(user), "access_token": access}
 
 @api.post("/auth/login")
 async def login(body: LoginIn, request: Request, response: Response):
@@ -230,9 +217,7 @@ async def login(body: LoginIn, request: Request, response: Response):
     access = create_access(user["id"], email)
     refresh = create_refresh(user["id"])
     set_auth_cookies(response, access, refresh)
-    return {"user": public_user(user), "access_token": access,
-            "encrypted_private_key": user.get("encrypted_private_key"),
-            "key_salt": user.get("key_salt")}
+    return {"user": public_user(user), "access_token": access}
 
 @api.post("/auth/logout")
 async def logout(response: Response, user: dict = Depends(get_current_user)):
@@ -241,9 +226,7 @@ async def logout(response: Response, user: dict = Depends(get_current_user)):
 
 @api.get("/auth/me")
 async def me(user: dict = Depends(get_current_user)):
-    return {"user": public_user(user),
-            "encrypted_private_key": user.get("encrypted_private_key"),
-            "key_salt": user.get("key_salt")}
+    return {"user": public_user(user)}
 
 @api.post("/auth/refresh")
 async def refresh_token(request: Request, response: Response):
@@ -279,9 +262,6 @@ async def register_guest(body: GuestRegisterIn, request: Request, response: Resp
         "display_name": body.display_name or f"ضيف_{suffix}",
         "avatar_url": None,
         "password_hash": hash_password(body.recovery_code),
-        "public_key": body.public_key,
-        "encrypted_private_key": body.encrypted_private_key,
-        "key_salt": body.key_salt,
         "two_factor_secret": None,
         "is_guest": True,
         "created_at": now_utc().isoformat(),
@@ -293,8 +273,7 @@ async def register_guest(body: GuestRegisterIn, request: Request, response: Resp
     set_auth_cookies(response, access, refresh)
     pu = public_user(user)
     pu["is_guest"] = True
-    return {"user": pu, "access_token": access, "username": username,
-            "encrypted_private_key": body.encrypted_private_key, "key_salt": body.key_salt}
+    return {"user": pu, "access_token": access, "username": username}
 
 @api.post("/auth/guest/login")
 async def login_guest(body: GuestLoginIn, request: Request, response: Response):
@@ -307,9 +286,7 @@ async def login_guest(body: GuestLoginIn, request: Request, response: Response):
     set_auth_cookies(response, access, refresh)
     pu = public_user(user)
     pu["is_guest"] = True
-    return {"user": pu, "access_token": access,
-            "encrypted_private_key": user.get("encrypted_private_key"),
-            "key_salt": user.get("key_salt")}
+    return {"user": pu, "access_token": access}
 
 @api.post("/auth/upgrade")
 async def upgrade_account(body: UpgradeAccountIn, user: dict = Depends(get_current_user)):
@@ -324,8 +301,6 @@ async def upgrade_account(body: UpgradeAccountIn, user: dict = Depends(get_curre
         {"$set": {
             "email": new_email,
             "password_hash": hash_password(body.password),
-            "encrypted_private_key": body.encrypted_private_key,
-            "key_salt": body.key_salt,
             "is_guest": False,
         }}
     )
@@ -926,9 +901,6 @@ async def startup():
             "display_name": "Admin",
             "avatar_url": None,
             "password_hash": hash_password(admin_pw),
-            "public_key": "PENDING",
-            "encrypted_private_key": "PENDING",
-            "key_salt": "PENDING",
             "two_factor_secret": None,
             "created_at": now_utc().isoformat(),
             "role": "admin",

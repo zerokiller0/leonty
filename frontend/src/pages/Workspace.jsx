@@ -862,7 +862,12 @@ function IncomingToast({ call, onAccept, onReject, icon, label }) {
     </div>
   );
 }
- [q, setQ] = useState("");
+
+function FriendsModal({ me, onDM, onClose }) {
+  const [tab, setTab] = useState("all");
+  const [friends, setFriends] = useState([]);
+  const [pending, setPending] = useState({ incoming: [], outgoing: [] });
+  const [q, setQ] = useState("");
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
 

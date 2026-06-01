@@ -1,61 +1,65 @@
-# Cipher — Secure E2EE Messenger (PRD)
+# Leonty — Romantic Pink Messenger (PRD)
 
 ## Problem Statement
-ابغى موقع تواصل اجتماعي مشفر end to end مع قاعدة حسابات تسجيل دخول وخصوصية جدا عالية والموقع يكون مشابه ل teams او ديسكورد
-(End-to-end encrypted social networking site with accounts, very high privacy, similar to Teams/Discord.)
+ابغى موقع تواصل اجتماعي مع قاعدة حسابات تسجيل دخول وخصوصية، مشابه ل Teams أو Discord، باسم Leonty وتصميم وردي رومانسي وواجهة عربية (RTL).
 
 ## User Choices
-- Auth: JWT custom (email + password)
-- Features: DMs, Servers + Text Channels, File Sharing, Voice/Video (deferred — WebRTC scaffolding)
-- E2EE: True end-to-end (server stores only ciphertext)
+- Auth: JWT custom (email + password) — **E2EE removed by user request**
+- Features: DMs, Servers + Text Channels, File/Image/Video sharing, Voice/Video calls (WebRTC), Watch Together, Stickers/Emojis, Friends system, Unread message badges
 - Privacy: Session/Device logs + 2FA (TOTP)
-- Design: Modern distinctive (Swiss high-contrast dark, #0A0A0A + #00FF66 accent, Outfit/Work Sans/IBM Plex Mono)
+- Design: Pink/Rose romantic UI, Arabic RTL, named "Leonty"
 
 ## Core Architecture
 - **Frontend**: React + Tailwind + Shadcn UI + lucide-react icons
 - **Backend**: FastAPI + Motor (async Mongo) + bcrypt + PyJWT + pyotp + qrcode
-- **E2EE**: RSA-OAEP 2048 (client-side, Web Crypto API) + AES-GCM 256 hybrid wrap
-- **Private key storage**: PBKDF2 200K → AES-GCM-encrypted, stored in MongoDB as ciphertext only
+- **Realtime**: WebRTC P2P for voice/video, polling for DMs/messages
 
-## Implemented (2026-02-30)
-- Landing page with hero, features grid, security spec, CTA
-- Auth: Register (client-generates keys) / Login / Logout / Me / Refresh / 2FA setup+verify+disable
-- Workspace 4-column layout: Servers | Channels/DMs | Chat | Members
+## Implemented
+- Landing page (Arabic RTL, pink rose theme)
+- Auth: Register / Login / Logout / Me / Refresh / 2FA setup+verify+disable (plain JWT, no E2EE)
+- Guest login flow (recovery code based)
+- Workspace 4-column layout: Servers | Channels/DMs/Friends | Chat | Members
 - Servers: create, list, join via invite code, delete (owner)
 - Channels: create, list, auto-default "general"
-- Channel messages: send, list (with sender hydration)
-- DMs: E2EE send (dual ciphertext: sender + recipient), list by user, list conversations
+- Channel messages: send, list (with sender hydration), plaintext
+- DMs: send, list, plaintext (no longer E2EE)
+- DM read tracking + unread badge counts per conversation
 - User search (by username / email / display_name)
-- File upload / download endpoints (no size cap yet)
+- Friends system: send/cancel/accept/decline requests, list friends, remove friend
+- File upload / download (2GB max, chunked, supports images/videos/files)
+- Custom emojis + stickers per server
+- WebRTC voice/video calls + screen share
+- Voice messages, Watch Together synced video
 - Session/device logs (GET /api/sessions)
 - 2FA enable with QR code + TOTP verify
-- Settings page: Security (2FA), Identity (public key + fingerprint), Sessions log
+- Settings page
 
-## Tested
-- 13/13 pytest backend tests passed (iteration_1.json): register, login, 2FA round-trip, servers, channels, E2EE DMs, files, unauthorized access.
+## Recently Fixed (2026-06-01)
+- Removed E2EE encryption requirement from auth (RegisterIn, GuestRegisterIn, UpgradeAccountIn now don't need public_key/encrypted_private_key/key_salt).
+- Cleaned AuthContext.jsx of all WebCrypto key generation / decryption logic.
+- Fixed Workspace.jsx FriendsModal function head (missing function declaration was breaking compile).
+- Updated landing CTA from "أنشئ مساحتك" → "أنشئ حسابك" per user request.
+- Removed encryption messaging from Register/Login pages.
+- Verified login + register + admin login + guest register flows via curl and Playwright.
 
 ## Backlog / Next Phase (P1/P2)
-- WebRTC voice/video calls (signaling via WebSocket)
-- File attachment UI in chat (upload button + preview)
-- Real-time WebSocket messaging (currently polls every 3s)
-- Brute-force lockout using login_attempts collection
-- Email verification on register
-- Push notifications
-- File size cap + streaming
-- Server roles & permissions
-- Read receipts (E2EE-compatible: hash-based)
-- Message edit/delete
-- Ephemeral messages (auto-delete timer)
-- Group DMs (multi-recipient)
-- Typing indicators
+- Real-time WebSocket messaging (currently polls every 3s) — replace polling.
+- Brute-force lockout using login_attempts collection.
+- Email verification on register.
+- Push notifications.
+- Server roles & permissions.
+- Message edit/delete.
+- Group DMs (multi-recipient).
+- Typing indicators.
+- Refactor: split server.py (~940 lines) into routes/auth.py, routes/servers.py, routes/dms.py, routes/friends.py for maintainability.
+- Remove legacy /app/frontend/src/lib/crypto.js entirely (still used by Settings.jsx/Workspace.jsx for `fingerprint` display which is guarded by `user?.public_key` — safe but dead).
 
 ## Users
 - Admin (seeded): admin@cipher.io / Admin@Cipher2026
-- Test users registered per test via /register
 
 ## Files
-- `/app/backend/server.py` — all endpoints
+- `/app/backend/server.py` — all endpoints (940 lines)
 - `/app/frontend/src/pages/{Landing,Login,Register,Workspace,Settings}.jsx`
-- `/app/frontend/src/lib/{api,crypto}.js`
-- `/app/frontend/src/contexts/AuthContext.jsx`
+- `/app/frontend/src/lib/{api,crypto}.js` — crypto.js is now legacy
+- `/app/frontend/src/contexts/AuthContext.jsx` — simplified, no E2EE
 - `/app/frontend/src/{App.js,index.css,App.css}`

@@ -54,7 +54,7 @@ export default function Login() {
             <span className="font-display-en text-2xl">Leonty</span>
           </Link>
           <h1 className="font-display text-3xl">أهلاً بعودتك</h1>
-          <p className="text-sm text-[var(--muted)] mt-2">سجّل دخول لمساحتك المشفّرة</p>
+          <p className="text-sm text-[var(--muted)] mt-2">سجّل دخول لتبدأ التواصل</p>
         </div>
 
         <div className="glass-card p-2 mb-4 flex">

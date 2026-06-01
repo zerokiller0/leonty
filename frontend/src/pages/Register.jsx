@@ -25,7 +25,7 @@ export default function Register() {
         email: form.email, password: form.password,
         username: form.username, display_name: form.display_name || form.username,
       });
-      toast.success("تم توليد المفاتيح — أهلاً");
+      toast.success("تم إنشاء الحساب — أهلاً");
       nav("/app");
     } catch (e) { setErr(formatApiError(e)); } finally { setLoading(false); }
   };
@@ -110,7 +110,7 @@ export default function Register() {
             <span className="font-display-en text-2xl">Leonty</span>
           </Link>
           <h1 className="font-display text-3xl">أنشئ حسابك</h1>
-          <p className="text-sm text-[var(--muted)] mt-2">المفاتيح ستُولّد في جهازك مباشرة</p>
+          <p className="text-sm text-[var(--muted)] mt-2">انضم إلى Leonty وابدأ التواصل</p>
         </div>
 
         <form onSubmit={submit} className="glass-card p-8 space-y-4">
@@ -145,7 +145,7 @@ export default function Register() {
           <div className="rounded-2xl border border-[var(--accent)]/20 bg-[var(--accent)]/5 p-3 flex gap-3 items-start">
             <KeyRound size={14} className="text-[var(--accent)] mt-0.5 shrink-0" />
             <p className="text-[11px] text-[var(--muted)] leading-relaxed">
-              كلمة مرورك تشفّر مفتاحك الخاص. <span className="text-[var(--accent)]">لو نسيتها فلن تستطيع استرجاع رسائلك.</span>
+              اختر كلمة مرور قوية. <span className="text-[var(--accent)]">احفظها في مكان آمن.</span>
             </p>
           </div>
 
@@ -153,7 +153,7 @@ export default function Register() {
 
           <button data-testid="reg-submit" type="submit" disabled={loading}
             className="btn-rose w-full py-3.5 text-sm disabled:opacity-50">
-            {loading ? "جاري توليد المفاتيح..." : "إنشاء حساب مشفّر"}
+            {loading ? "جاري الإنشاء..." : "إنشاء الحساب"}
           </button>
 
           <div className="relative my-2 flex items-center">

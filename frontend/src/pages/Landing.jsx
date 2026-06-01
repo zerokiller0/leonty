@@ -45,7 +45,7 @@ export default function Landing() {
             <div className="mt-10 flex items-center gap-4 flex-wrap">
               <Link to="/register" data-testid="hero-cta-btn"
                 className="group btn-rose inline-flex items-center gap-2 px-7 py-4 text-base">
-                أنشئ مساحتك
+                أنشئ حسابك
                 <ArrowLeft size={16} className="group-hover:-translate-x-1 transition-transform" />
               </Link>
               <Link to="/login" className="text-sm text-[var(--muted)] hover:text-white transition-colors">
