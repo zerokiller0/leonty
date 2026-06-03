@@ -150,6 +150,12 @@ class DMSendIn(BaseModel):
     content: str
     attachment_id: Optional[str] = None
 
+class DMEditIn(BaseModel):
+    content: str
+
+class DMReactionIn(BaseModel):
+    emoji: str
+
 class FriendRequestIn(BaseModel):
     to_user_id: str
 
@@ -528,11 +534,72 @@ async def send_dm(body: DMSendIn, user: dict = Depends(get_current_user)):
         "recipient_id": body.recipient_id,
         "content": body.content,
         "attachment_id": body.attachment_id,
+        "reactions": [],
+        "edited_at": None,
+        "deleted_at": None,
         "created_at": now_utc().isoformat(),
     }
     await db.dms.insert_one(msg)
     msg.pop("_id", None)
     return {"message": msg}
+
+@api.patch("/dms/{message_id}")
+async def edit_dm(message_id: str, body: DMEditIn, user: dict = Depends(get_current_user)):
+    msg = await db.dms.find_one({"id": message_id}, {"_id": 0})
+    if not msg:
+        raise HTTPException(404, "Message not found")
+    if msg["sender_id"] != user["id"]:
+        raise HTTPException(403, "Not your message")
+    if msg.get("deleted_at"):
+        raise HTTPException(400, "Cannot edit deleted message")
+    if msg.get("attachment_id"):
+        raise HTTPException(400, "Cannot edit attachment messages")
+    content = body.content.strip()
+    if not content:
+        raise HTTPException(400, "Empty content")
+    now_iso = now_utc().isoformat()
+    await db.dms.update_one({"id": message_id}, {"$set": {"content": content, "edited_at": now_iso}})
+    updated = await db.dms.find_one({"id": message_id}, {"_id": 0})
+    return {"message": updated}
+
+@api.delete("/dms/{message_id}")
+async def delete_dm(message_id: str, user: dict = Depends(get_current_user)):
+    msg = await db.dms.find_one({"id": message_id}, {"_id": 0})
+    if not msg:
+        raise HTTPException(404, "Message not found")
+    if msg["sender_id"] != user["id"]:
+        raise HTTPException(403, "Not your message")
+    if msg.get("deleted_at"):
+        return {"ok": True}
+    await db.dms.update_one({"id": message_id}, {"$set": {
+        "deleted_at": now_utc().isoformat(),
+        "content": "",
+        "attachment_id": None,
+        "reactions": [],
+    }})
+    return {"ok": True}
+
+@api.post("/dms/{message_id}/reactions")
+async def toggle_dm_reaction(message_id: str, body: DMReactionIn, user: dict = Depends(get_current_user)):
+    msg = await db.dms.find_one({"id": message_id}, {"_id": 0})
+    if not msg:
+        raise HTTPException(404, "Message not found")
+    if msg.get("deleted_at"):
+        raise HTTPException(400, "Cannot react to deleted message")
+    if user["id"] not in (msg["sender_id"], msg["recipient_id"]):
+        raise HTTPException(403, "Not allowed")
+    emoji = (body.emoji or "").strip()
+    if not emoji or len(emoji) > 16:
+        raise HTTPException(400, "Invalid emoji")
+    reactions = msg.get("reactions") or []
+    existing_idx = next((i for i, r in enumerate(reactions)
+                         if r.get("emoji") == emoji and r.get("user_id") == user["id"]), None)
+    if existing_idx is not None:
+        reactions.pop(existing_idx)
+    else:
+        reactions.append({"emoji": emoji, "user_id": user["id"], "created_at": now_utc().isoformat()})
+    await db.dms.update_one({"id": message_id}, {"$set": {"reactions": reactions}})
+    return {"reactions": reactions}
 
 @api.get("/dms/{user_id}")
 async def get_dms(user_id: str, user: dict = Depends(get_current_user)):
@@ -575,12 +642,14 @@ async def list_conversations(user: dict = Depends(get_current_user)):
         unread = await db.dms.count_documents({
             "conversation_id": last["conversation_id"],
             "recipient_id": user["id"],
+            "deleted_at": None,
             "created_at": {"$gt": last_read},
         })
+        preview = "رسالة محذوفة" if last.get("deleted_at") else ((last.get("content") or "")[:80])
         convs.append({
             "partner": public_user(partner),
             "last_message_at": last["created_at"],
-            "last_message_preview": (last.get("content") or "")[:80],
+            "last_message_preview": preview,
             "unread_count": unread,
         })
     return {"conversations": convs}

@@ -38,6 +38,10 @@ export default function Workspace() {
   const [showPlusMenu, setShowPlusMenu] = useState(false);
   const [showFriendsModal, setShowFriendsModal] = useState(false);
   const [friendRequestCount, setFriendRequestCount] = useState(0);
+  const [editingMsgId, setEditingMsgId] = useState(null);
+  const [editingText, setEditingText] = useState("");
+  const [reactionPickerId, setReactionPickerId] = useState(null);
+  const [hoveredMsgId, setHoveredMsgId] = useState(null);
   const [callPartner, setCallPartner] = useState(null);
   const [incomingCall, setIncomingCall] = useState(null);
   const [watchPartner, setWatchPartner] = useState(null);
@@ -184,6 +188,39 @@ export default function Workspace() {
     const end = el.selectionEnd ?? input.length;
     setInput(input.slice(0, start) + text + input.slice(end));
     setTimeout(() => { el.focus(); el.selectionStart = el.selectionEnd = start + text.length; }, 0);
+  };
+
+  // ---- DM message actions: edit, delete, react ----
+  const startEditMsg = (m) => {
+    setEditingMsgId(m.id);
+    setEditingText(m.content || "");
+    setReactionPickerId(null);
+  };
+  const cancelEditMsg = () => { setEditingMsgId(null); setEditingText(""); };
+  const saveEditMsg = async () => {
+    const text = editingText.trim();
+    if (!text) { toast.error("لا يمكن أن تكون فارغة"); return; }
+    try {
+      const { data } = await api.patch(`/dms/${editingMsgId}`, { content: text });
+      setMessages((prev) => prev.map((x) => x.id === editingMsgId ? { ...x, ...data.message } : x));
+      cancelEditMsg();
+    } catch (e) { toast.error(formatApiError(e)); }
+  };
+  const deleteMsg = async (mid) => {
+    if (!window.confirm("حذف الرسالة؟")) return;
+    try {
+      await api.delete(`/dms/${mid}`);
+      setMessages((prev) => prev.map((x) => x.id === mid
+        ? { ...x, deleted_at: new Date().toISOString(), content: "", attachment_id: null, reactions: [] }
+        : x));
+    } catch (e) { toast.error(formatApiError(e)); }
+  };
+  const toggleReaction = async (mid, emoji) => {
+    setReactionPickerId(null);
+    try {
+      const { data } = await api.post(`/dms/${mid}/reactions`, { emoji });
+      setMessages((prev) => prev.map((x) => x.id === mid ? { ...x, reactions: data.reactions } : x));
+    } catch (e) { toast.error(formatApiError(e)); }
   };
 
   const createServer = async (name) => {
