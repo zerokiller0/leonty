@@ -10,7 +10,7 @@ import VoiceCall from "../components/VoiceCall";
 import WatchTogether from "../components/WatchTogether";
 import {
   Heart, Plus, Hash, Settings as SettingsIcon, LogOut, Search, Send,
-  Lock, MessageCircle, Copy, X, Smile, Trash2, ImagePlus, Phone, Video,
+  Lock, MessageCircle, Copy, X, Smile, Trash2, ImagePlus, Phone, PhoneOff, Video,
   Film, Sticker as StickerIcon, Calendar, Paperclip, Download, FileIcon, Image as ImageIcon,
   UserPlus, Check, UserX, Pencil,
 } from "lucide-react";
@@ -111,10 +111,20 @@ export default function Workspace() {
     const poll = async () => {
       try {
         const { data } = await api.get("/calls/signals");
-        const offer = data.signals.find(s => s.type === "offer");
-        if (offer) setIncomingCall({ partner: offer.from_user, callId: offer.call_id, offer: offer.payload });
-        const watchInvite = data.signals.find(s => s.type === "watch_invite");
-        if (watchInvite) setIncomingWatch({ partner: watchInvite.from_user, ...watchInvite.payload });
+        for (const s of data.signals) {
+          // End-of-call/cancel signals — clear pending incoming state
+          if (s.type === "hangup" || s.type === "close" || s.type === "decline") {
+            setIncomingCall((cur) => (cur && cur.partner.id === s.from_user_id) ? null : cur);
+            setIncomingWatch((cur) => (cur && cur.partner.id === s.from_user_id) ? null : cur);
+            continue;
+          }
+          if (s.type === "offer") {
+            setIncomingCall({ partner: s.from_user, callId: s.call_id, offer: s.payload });
+          } else if (s.type === "invite") {
+            // Watch Together invite — surface as a message-like banner
+            setIncomingWatch({ partner: s.from_user, ...s.payload });
+          }
+        }
       } catch {}
     };
     const t = setInterval(poll, 2500); poll();
@@ -706,8 +716,14 @@ export default function Workspace() {
           onClose={() => { setCallPartner(null); setIncomingCall(null); }} />
       )}
       {incomingCall && !callPartner && (
-        <IncomingToast call={incomingCall} onAccept={() => setCallPartner(incomingCall.partner)}
-          onReject={() => setIncomingCall(null)} icon={<Phone size={14} />} label="مكالمة واردة" />
+        <IncomingCallFullScreen
+          call={incomingCall}
+          onAccept={() => setCallPartner(incomingCall.partner)}
+          onReject={async () => {
+            try { await api.post("/calls/signal", { to_user_id: incomingCall.partner.id, type: "hangup", payload: {}, call_id: incomingCall.callId }); } catch {}
+            setIncomingCall(null);
+          }}
+        />
       )}
       {watchPartner && (
         <WatchTogether partner={watchPartner} me={user}
@@ -715,9 +731,14 @@ export default function Workspace() {
           onClose={() => { setWatchPartner(null); setIncomingWatch(null); }} />
       )}
       {incomingWatch && !watchPartner && (
-        <IncomingToast call={{ partner: incomingWatch.partner }}
+        <WatchInviteCard
+          invite={incomingWatch}
           onAccept={() => setWatchPartner(incomingWatch.partner)}
-          onReject={() => setIncomingWatch(null)} icon={<Film size={14} />} label="دعوة مشاهدة" />
+          onReject={async () => {
+            try { await api.post("/calls/signal", { to_user_id: incomingWatch.partner.id, type: "close", payload: {} }); } catch {}
+            setIncomingWatch(null);
+          }}
+        />
       )}
     </div>
   );
@@ -1103,6 +1124,110 @@ function IncomingToast({ call, onAccept, onReject, icon, label }) {
         className="w-10 h-10 rounded-full gradient-rose text-white flex items-center justify-center heart-pulse">
         {icon}
       </button>
+    </div>
+  );
+}
+
+function IncomingCallFullScreen({ call, onAccept, onReject }) {
+  const name = call.partner.display_name || "غير معروف";
+  const initial = name[0]?.toUpperCase() || "?";
+  return (
+    <div dir="rtl" data-testid="incoming-call-fullscreen"
+      className="fixed inset-0 z-[70] flex flex-col items-center justify-between py-20 px-6 animate-chat-in"
+      style={{
+        background: "radial-gradient(circle at 50% 30%, rgba(255,107,157,0.35) 0%, rgba(15,5,15,0.95) 60%, #0a0510 100%)",
+        backdropFilter: "blur(24px)",
+      }}>
+      {/* Floating heart blobs */}
+      <div className="absolute top-[15%] left-[10%] w-72 h-72 rounded-full bg-[var(--accent)]/20 blur-3xl float-blob pointer-events-none" />
+      <div className="absolute bottom-[20%] right-[8%] w-80 h-80 rounded-full bg-[var(--secondary)]/15 blur-3xl float-blob pointer-events-none" style={{ animationDelay: "2s" }} />
+
+      <div className="relative z-10 text-center">
+        <div className="text-xs label-soft tracking-[0.4em] mb-4">مكالمة واردة</div>
+        <div className="font-display text-4xl text-white mb-2">{name}</div>
+        <div className="text-sm text-[var(--muted)]">@{call.partner.username || ""}</div>
+      </div>
+
+      <div className="relative z-10">
+        <div className="w-48 h-48 rounded-full gradient-rose flex items-center justify-center text-white font-display text-7xl shadow-2xl shadow-[var(--accent)]/40 heart-pulse">
+          {call.partner.avatar_url
+            ? <img src={call.partner.avatar_url} alt={name} className="w-full h-full rounded-full object-cover" />
+            : initial}
+        </div>
+      </div>
+
+      <div className="relative z-10 flex items-center justify-center gap-16">
+        <div className="flex flex-col items-center gap-3">
+          <button
+            data-testid="incoming-call-reject"
+            onClick={onReject}
+            className="w-20 h-20 rounded-full bg-[var(--error)] text-white shadow-2xl shadow-[var(--error)]/40 hover:scale-105 active:scale-95 transition-transform flex items-center justify-center"
+            aria-label="رفض المكالمة">
+            <PhoneOff size={28} />
+          </button>
+          <span className="text-xs label-soft">رفض</span>
+        </div>
+        <div className="flex flex-col items-center gap-3">
+          <button
+            data-testid="incoming-call-accept"
+            onClick={onAccept}
+            className="w-20 h-20 rounded-full gradient-rose text-white shadow-2xl shadow-[var(--accent)]/60 hover:scale-105 active:scale-95 transition-transform flex items-center justify-center heart-pulse"
+            aria-label="قبول المكالمة">
+            <Phone size={28} />
+          </button>
+          <span className="text-xs label-soft">قبول</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WatchInviteCard({ invite, onAccept, onReject }) {
+  const name = invite.partner.display_name || "غير معروف";
+  const initial = name[0]?.toUpperCase() || "?";
+  const sizeMB = invite.size ? `${(invite.size / 1024 / 1024).toFixed(1)} م.ب` : "";
+  return (
+    <div dir="rtl" data-testid="watch-invite-card"
+      className="fixed bottom-6 right-6 z-50 w-[340px] rounded-3xl bg-[var(--bg-soft)] border border-[var(--accent)]/30 shadow-2xl shadow-[var(--accent)]/15 overflow-hidden animate-chat-in">
+      {/* Header — looks like a chat message */}
+      <div className="flex items-center gap-3 px-4 pt-4 pb-2">
+        <div className="w-10 h-10 rounded-full gradient-rose flex items-center justify-center text-white font-display shrink-0">
+          {invite.partner.avatar_url
+            ? <img src={invite.partner.avatar_url} alt={name} className="w-full h-full rounded-full object-cover" />
+            : initial}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium truncate">{name}</div>
+          <div className="text-[10px] label-soft">يدعوك للمشاهدة معاً</div>
+        </div>
+        <button onClick={onReject} data-testid="watch-invite-close"
+          className="w-7 h-7 rounded-full hover:bg-white/5 text-[var(--muted)] hover:text-white flex items-center justify-center">
+          <X size={13} />
+        </button>
+      </div>
+
+      {/* Message-style bubble */}
+      <div className="mx-4 mb-3 rounded-2xl rounded-tr-md bg-[var(--surface)] px-3.5 py-2.5 flex items-center gap-2.5">
+        <div className="w-9 h-9 rounded-xl bg-[var(--accent)]/15 text-[var(--accent)] flex items-center justify-center shrink-0">
+          <Film size={16} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-xs font-medium truncate">{invite.filename || "فيديو مشاهدة سويّة"}</div>
+          {sizeMB && <div className="text-[10px] text-[var(--muted-soft)] font-mono-key">{sizeMB}</div>}
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div className="flex gap-2 px-4 pb-4">
+        <button data-testid="watch-invite-accept" onClick={onAccept}
+          className="flex-1 btn-rose py-2.5 text-xs flex items-center justify-center gap-2">
+          <Film size={13} /> مشاهدة معاً
+        </button>
+        <button data-testid="watch-invite-reject" onClick={onReject}
+          className="px-4 py-2.5 rounded-full bg-[var(--surface)] hover:bg-[var(--surface-hover)] text-xs text-[var(--muted)]">
+          تجاهل
+        </button>
+      </div>
     </div>
   );
 }

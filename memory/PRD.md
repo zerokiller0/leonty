@@ -55,7 +55,18 @@
 - Frontend: `pages/AuthCallback.jsx` handles `#session_id=` hash in URL (synchronous check in App.js `AppRouter` to prevent race condition with AuthContext bootstrap). AuthContext skips `/me` check when hash contains `session_id=`. Google button on Login page redirects to `auth.emergentagent.com` with `window.location.origin + '/app'` as redirect.
 - **48 legacy guest accounts purged** (along with 16 DMs, 58 sessions, 2 dm_reads).
 
+## Call/Watch UX Improvements (2026-06-15) — NEW
+- **Incoming call**: now full-screen romantic UI (`IncomingCallFullScreen`) — radial pink gradient backdrop, large avatar (192px) with heart-pulse, big accept (Phone) + reject (PhoneOff) buttons. Replaces old corner toast.
+- **Watch Together invite**: now displays as a chat-message-style card (`WatchInviteCard`) in bottom-right — avatar + sender name + message bubble showing filename + size, with "مشاهدة معاً" and "تجاهل" buttons. Not call-like anymore.
+- **Hangup signal propagation fix**: When user rejects an incoming call, frontend now sends `hangup` signal back to caller (was missing — caller's screen would stay on "calling..." until timeout). Same for declining watch invite (sends `close`).
+- **Workspace signal poller**: Now handles `hangup`/`close`/`decline` signals to clear pending incoming states (previously these were consumed by the poller but never acted upon, leading to ghost call states).
+- Watch invite signal renamed from `watch_invite` to `invite` to match what `WatchTogether.jsx` actually sends.
+
 ## Lovers System + Profile Actions (2026-06-15) — NEW
+- **Lover (حبيب) bond** — mutual, exclusive (one lover at a time per user). Mirror of friend system with stricter rules.
+- Backend endpoints: `POST /api/lovers/request`, `GET /api/lovers/requests`, `POST /api/lovers/requests/{id}/accept`, `POST /api/lovers/requests/{id}/decline`, `DELETE /api/lovers/requests/{id}`, `GET /api/lovers/me`, `DELETE /api/lovers/me` (break up), and `GET /api/relationship/{user_id}` (unified status).
+- Frontend `ProfileCard` (right panel in DM view) now shows TWO action buttons: "اضافة حبيب" (pink, heart icon) and "اضافة صديق" (neutral). Buttons adapt based on current state: send / cancel / accept-decline / remove / "💔 انفصال". Badge "💕 حبيبك" or "صديق" shows next to display_name when relationship exists.
+- DB: `users.lover_id` + `users.lover_since` fields, new collection `lover_requests`.
 - **Lover (حبيب) bond** — mutual, exclusive (one lover at a time per user). Mirror of friend system with stricter rules.
 - Backend endpoints: `POST /api/lovers/request`, `GET /api/lovers/requests`, `POST /api/lovers/requests/{id}/accept`, `POST /api/lovers/requests/{id}/decline`, `DELETE /api/lovers/requests/{id}`, `GET /api/lovers/me`, `DELETE /api/lovers/me` (break up), and `GET /api/relationship/{user_id}` (unified status).
 - Frontend `ProfileCard` (right panel in DM view) now shows TWO action buttons: "اضافة حبيب" (pink, heart icon) and "اضافة صديق" (neutral). Buttons adapt based on current state: send / cancel / accept-decline / remove / "💔 انفصال". Badge "💕 حبيبك" or "صديق" shows next to display_name when relationship exists.
