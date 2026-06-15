@@ -55,6 +55,12 @@
 - Frontend: `pages/AuthCallback.jsx` handles `#session_id=` hash in URL (synchronous check in App.js `AppRouter` to prevent race condition with AuthContext bootstrap). AuthContext skips `/me` check when hash contains `session_id=`. Google button on Login page redirects to `auth.emergentagent.com` with `window.location.origin + '/app'` as redirect.
 - **48 legacy guest accounts purged** (along with 16 DMs, 58 sessions, 2 dm_reads).
 
+## Lovers System + Profile Actions (2026-06-15) — NEW
+- **Lover (حبيب) bond** — mutual, exclusive (one lover at a time per user). Mirror of friend system with stricter rules.
+- Backend endpoints: `POST /api/lovers/request`, `GET /api/lovers/requests`, `POST /api/lovers/requests/{id}/accept`, `POST /api/lovers/requests/{id}/decline`, `DELETE /api/lovers/requests/{id}`, `GET /api/lovers/me`, `DELETE /api/lovers/me` (break up), and `GET /api/relationship/{user_id}` (unified status).
+- Frontend `ProfileCard` (right panel in DM view) now shows TWO action buttons: "اضافة حبيب" (pink, heart icon) and "اضافة صديق" (neutral). Buttons adapt based on current state: send / cancel / accept-decline / remove / "💔 انفصال". Badge "💕 حبيبك" or "صديق" shows next to display_name when relationship exists.
+- DB: `users.lover_id` + `users.lover_since` fields, new collection `lover_requests`.
+
 ## Backlog / Next Phase (P1/P2)
 - Real-time WebSocket messaging (currently polls every 3s) — replace polling.
 - Brute-force lockout using login_attempts collection.

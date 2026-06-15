@@ -733,6 +733,43 @@ function Avatar({ user, size = 36 }) {
 }
 
 function ProfileCard({ user }) {
+  const { user: me } = useAuth();
+  const [rel, setRel] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const loadRel = async () => {
+    if (!user?.id || !me?.id || user.id === me.id) { setRel({ is_self: true }); return; }
+    try {
+      const { data } = await api.get(`/relationship/${user.id}`);
+      setRel(data);
+    } catch { setRel(null); }
+  };
+  useEffect(() => { loadRel(); /* eslint-disable-next-line */ }, [user?.id, me?.id]);
+
+  const act = async (fn, msg) => {
+    setBusy(true);
+    try { await fn(); toast.success(msg); await loadRel(); }
+    catch (e) { toast.error(formatApiError(e)); }
+    finally { setBusy(false); }
+  };
+
+  const addFriend = () => act(() => api.post("/friends/requests", { to_user_id: user.id }), "تم إرسال طلب الصداقة");
+  const cancelFriend = (rid) => act(() => api.delete(`/friends/requests/${rid}`), "تم إلغاء الطلب");
+  const acceptFriend = (rid) => act(() => api.post(`/friends/requests/${rid}/accept`), "أصبحتما صديقين");
+  const declineFriend = (rid) => act(() => api.post(`/friends/requests/${rid}/decline`), "تم الرفض");
+  const removeFriend = () => act(() => api.delete(`/friends/${user.id}`), "تمت إزالة الصديق");
+
+  const addLover = () => act(() => api.post("/lovers/request", { to_user_id: user.id }), "💕 تم إرسال طلب الحب");
+  const cancelLover = (rid) => act(() => api.delete(`/lovers/requests/${rid}`), "تم إلغاء الطلب");
+  const acceptLover = (rid) => act(() => api.post(`/lovers/requests/${rid}/accept`), "💕 أنتما حبيبان الآن");
+  const declineLover = (rid) => act(() => api.post(`/lovers/requests/${rid}/decline`), "تم الرفض");
+  const breakUp = () => {
+    if (!window.confirm("هل أنت متأكد من الانفصال؟")) return;
+    act(() => api.delete("/lovers/me"), "💔 تم الانفصال");
+  };
+
+  const isSelf = rel?.is_self;
+
   return (
     <div className="flex flex-col">
       <div className="h-24 gradient-rose" />
@@ -744,10 +781,77 @@ function ProfileCard({ user }) {
           <div className="font-display text-lg flex items-center gap-2">
             {user.display_name}
             {user.is_guest && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-[var(--accent)]/20 text-[var(--accent)]">ضيف</span>}
+            {rel?.is_lover && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-[var(--accent)] text-white flex items-center gap-1">💕 حبيبك</span>}
+            {rel?.is_friend && !rel?.is_lover && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-[var(--surface-hover)] text-[var(--muted)]">صديق</span>}
           </div>
           <div className="text-xs text-[var(--muted)] font-mono-key">@{user.username}</div>
         </div>
       </div>
+
+      {/* Relationship actions */}
+      {!isSelf && rel && (
+        <div className="px-5 pt-4 space-y-2">
+          {/* Lover button row */}
+          {rel.is_lover ? (
+            <button onClick={breakUp} disabled={busy} data-testid="break-up-btn"
+              className="w-full py-2.5 rounded-2xl text-sm border border-[var(--error)]/40 text-[var(--error)] hover:bg-[var(--error)]/10 transition-colors disabled:opacity-50">
+              💔 انفصال
+            </button>
+          ) : rel.lover_request_outgoing ? (
+            <button onClick={() => cancelLover(rel.lover_request_outgoing.id)} disabled={busy} data-testid="cancel-lover-btn"
+              className="w-full py-2.5 rounded-2xl text-sm border border-[var(--accent)]/40 text-[var(--accent)] hover:bg-[var(--accent)]/10 transition-colors disabled:opacity-50">
+              ⏳ طلب الحب مُرسل · إلغاء
+            </button>
+          ) : rel.lover_request_incoming ? (
+            <div className="flex gap-2">
+              <button onClick={() => acceptLover(rel.lover_request_incoming.id)} disabled={busy} data-testid="accept-lover-btn"
+                className="flex-1 py-2.5 rounded-2xl text-sm btn-rose disabled:opacity-50">
+                💕 قبول الحب
+              </button>
+              <button onClick={() => declineLover(rel.lover_request_incoming.id)} disabled={busy} data-testid="decline-lover-btn"
+                className="px-3 py-2.5 rounded-2xl text-sm bg-[var(--surface)] hover:bg-[var(--surface-hover)] disabled:opacity-50">
+                <X size={14} />
+              </button>
+            </div>
+          ) : (
+            <button onClick={addLover} disabled={busy || rel.i_have_lover || rel.target_has_lover} data-testid="add-lover-btn"
+              title={rel.i_have_lover ? "لديك حبيب بالفعل" : rel.target_has_lover ? "هذا الشخص مرتبط" : ""}
+              className="w-full py-2.5 rounded-2xl text-sm btn-rose disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+              <Heart size={14} fill="currentColor" /> اضافة حبيب
+            </button>
+          )}
+
+          {/* Friend button row */}
+          {rel.is_friend ? (
+            <button onClick={removeFriend} disabled={busy} data-testid="remove-friend-btn"
+              className="w-full py-2.5 rounded-2xl text-sm border border-[var(--border)] text-[var(--muted)] hover:text-[var(--error)] hover:border-[var(--error)]/40 transition-colors disabled:opacity-50">
+              إزالة الصديق
+            </button>
+          ) : rel.friend_request_outgoing ? (
+            <button onClick={() => cancelFriend(rel.friend_request_outgoing.id)} disabled={busy} data-testid="cancel-friend-btn"
+              className="w-full py-2.5 rounded-2xl text-sm border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--surface-hover)] transition-colors disabled:opacity-50">
+              ⏳ طلب صداقة مُرسل · إلغاء
+            </button>
+          ) : rel.friend_request_incoming ? (
+            <div className="flex gap-2">
+              <button onClick={() => acceptFriend(rel.friend_request_incoming.id)} disabled={busy} data-testid="accept-friend-btn"
+                className="flex-1 py-2.5 rounded-2xl text-sm bg-[var(--surface)] hover:bg-[var(--surface-hover)] border border-[var(--accent)]/30 disabled:opacity-50">
+                <UserPlus size={13} className="inline ms-1" /> قبول الصداقة
+              </button>
+              <button onClick={() => declineFriend(rel.friend_request_incoming.id)} disabled={busy} data-testid="decline-friend-btn"
+                className="px-3 py-2.5 rounded-2xl text-sm bg-[var(--surface)] hover:bg-[var(--surface-hover)] disabled:opacity-50">
+                <X size={14} />
+              </button>
+            </div>
+          ) : (
+            <button onClick={addFriend} disabled={busy} data-testid="add-friend-btn"
+              className="w-full py-2.5 rounded-2xl text-sm bg-[var(--surface)] hover:bg-[var(--surface-hover)] border border-[var(--border)] flex items-center justify-center gap-2 disabled:opacity-50">
+              <UserPlus size={14} /> اضافة صديق
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="p-5 space-y-4">
         {user.status && (
           <div>
@@ -759,12 +863,6 @@ function ProfileCard({ user }) {
           <div>
             <div className="label-soft mb-1.5">نبذة</div>
             <div className="text-sm leading-relaxed whitespace-pre-wrap">{user.about_me}</div>
-          </div>
-        )}
-        {user.public_key && (
-          <div>
-            <div className="label-soft mb-1.5">بصمة المفتاح</div>
-            <code className="block font-mono-key text-[10px] text-[var(--accent)] break-all">{user.public_key.slice(40, 80)}</code>
           </div>
         )}
         <div className="text-[10px] text-[var(--muted-soft)]">

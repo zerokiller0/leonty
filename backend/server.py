@@ -805,6 +805,153 @@ async def remove_friend(user_id: str, user: dict = Depends(get_current_user)):
     await db.friendships.delete_many({"user_a": pair[0], "user_b": pair[1]})
     return {"ok": True}
 
+# ---------- Lovers (حبيب — special bond, only one at a time) ----------
+class LoverRequestIn(BaseModel):
+    to_user_id: str
+
+async def _get_lover_id(uid: str) -> Optional[str]:
+    u = await db.users.find_one({"id": uid}, {"_id": 0, "lover_id": 1})
+    return (u or {}).get("lover_id")
+
+@api.post("/lovers/request")
+async def send_lover_request(body: LoverRequestIn, user: dict = Depends(get_current_user)):
+    if body.to_user_id == user["id"]:
+        raise HTTPException(400, "لا يمكنك أن تكون حبيب نفسك")
+    target = await db.users.find_one({"id": body.to_user_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(404, "المستخدم غير موجود")
+    if await _get_lover_id(user["id"]):
+        raise HTTPException(400, "لديك حبيب بالفعل")
+    if target.get("lover_id"):
+        raise HTTPException(400, "هذا الشخص مرتبط بحبيب آخر")
+    pending = await db.lover_requests.find_one({
+        "$or": [
+            {"from_user_id": user["id"], "to_user_id": body.to_user_id},
+            {"from_user_id": body.to_user_id, "to_user_id": user["id"]},
+        ],
+        "status": "pending",
+    }, {"_id": 0})
+    if pending:
+        raise HTTPException(400, "هناك طلب معلّق")
+    req = {
+        "id": str(uuid.uuid4()),
+        "from_user_id": user["id"],
+        "to_user_id": body.to_user_id,
+        "status": "pending",
+        "created_at": now_utc().isoformat(),
+    }
+    await db.lover_requests.insert_one(req)
+    req.pop("_id", None)
+    return {"request": req}
+
+@api.get("/lovers/requests")
+async def list_lover_requests(user: dict = Depends(get_current_user)):
+    incoming = await db.lover_requests.find(
+        {"to_user_id": user["id"], "status": "pending"}, {"_id": 0}
+    ).sort("created_at", -1).to_list(200)
+    outgoing = await db.lover_requests.find(
+        {"from_user_id": user["id"], "status": "pending"}, {"_id": 0}
+    ).sort("created_at", -1).to_list(200)
+    user_ids = list({*[r["from_user_id"] for r in incoming], *[r["to_user_id"] for r in outgoing]})
+    users = await db.users.find({"id": {"$in": user_ids}}, {"_id": 0}).to_list(500)
+    umap = {u["id"]: public_user(u) for u in users}
+    for r in incoming:
+        r["from_user"] = umap.get(r["from_user_id"])
+    for r in outgoing:
+        r["to_user"] = umap.get(r["to_user_id"])
+    return {"incoming": incoming, "outgoing": outgoing}
+
+@api.post("/lovers/requests/{request_id}/accept")
+async def accept_lover(request_id: str, user: dict = Depends(get_current_user)):
+    req = await db.lover_requests.find_one({"id": request_id, "to_user_id": user["id"], "status": "pending"}, {"_id": 0})
+    if not req:
+        raise HTTPException(404, "طلب غير موجود")
+    if await _get_lover_id(user["id"]):
+        raise HTTPException(400, "لديك حبيب بالفعل")
+    other = await db.users.find_one({"id": req["from_user_id"]}, {"_id": 0})
+    if not other or other.get("lover_id"):
+        raise HTTPException(400, "غير متاح")
+    now_iso = now_utc().isoformat()
+    await db.users.update_one({"id": user["id"]}, {"$set": {"lover_id": req["from_user_id"], "lover_since": now_iso}})
+    await db.users.update_one({"id": req["from_user_id"]}, {"$set": {"lover_id": user["id"], "lover_since": now_iso}})
+    await db.lover_requests.update_one({"id": request_id}, {"$set": {"status": "accepted"}})
+    # Reject all other pending requests for both users
+    await db.lover_requests.update_many(
+        {"$or": [
+            {"to_user_id": user["id"], "status": "pending"},
+            {"from_user_id": user["id"], "status": "pending"},
+            {"to_user_id": req["from_user_id"], "status": "pending"},
+            {"from_user_id": req["from_user_id"], "status": "pending"},
+        ]},
+        {"$set": {"status": "declined"}},
+    )
+    return {"ok": True}
+
+@api.post("/lovers/requests/{request_id}/decline")
+async def decline_lover(request_id: str, user: dict = Depends(get_current_user)):
+    req = await db.lover_requests.find_one({"id": request_id, "to_user_id": user["id"], "status": "pending"}, {"_id": 0})
+    if not req:
+        raise HTTPException(404, "طلب غير موجود")
+    await db.lover_requests.update_one({"id": request_id}, {"$set": {"status": "declined"}})
+    return {"ok": True}
+
+@api.delete("/lovers/requests/{request_id}")
+async def cancel_lover_request(request_id: str, user: dict = Depends(get_current_user)):
+    res = await db.lover_requests.delete_one({"id": request_id, "from_user_id": user["id"], "status": "pending"})
+    if res.deleted_count == 0:
+        raise HTTPException(404, "غير موجود")
+    return {"ok": True}
+
+@api.get("/lovers/me")
+async def get_my_lover(user: dict = Depends(get_current_user)):
+    lid = await _get_lover_id(user["id"])
+    if not lid:
+        return {"lover": None}
+    lover = await db.users.find_one({"id": lid}, {"_id": 0})
+    if not lover:
+        return {"lover": None}
+    me_full = await db.users.find_one({"id": user["id"]}, {"_id": 0, "lover_since": 1})
+    return {"lover": public_user(lover), "since": (me_full or {}).get("lover_since")}
+
+@api.delete("/lovers/me")
+async def break_up(user: dict = Depends(get_current_user)):
+    lid = await _get_lover_id(user["id"])
+    if not lid:
+        raise HTTPException(400, "لا يوجد حبيب")
+    await db.users.update_one({"id": user["id"]}, {"$unset": {"lover_id": "", "lover_since": ""}})
+    await db.users.update_one({"id": lid}, {"$unset": {"lover_id": "", "lover_since": ""}})
+    return {"ok": True}
+
+@api.get("/relationship/{user_id}")
+async def relationship_status(user_id: str, user: dict = Depends(get_current_user)):
+    """Returns relationship state between current user and target: friend/lover/request status."""
+    if user_id == user["id"]:
+        return {"is_self": True}
+    # Friend?
+    pair = sorted([user["id"], user_id])
+    is_friend = bool(await db.friendships.find_one({"user_a": pair[0], "user_b": pair[1]}, {"_id": 0}))
+    # Friend request?
+    fr_out = await db.friend_requests.find_one({"from_user_id": user["id"], "to_user_id": user_id, "status": "pending"}, {"_id": 0})
+    fr_in = await db.friend_requests.find_one({"from_user_id": user_id, "to_user_id": user["id"], "status": "pending"}, {"_id": 0})
+    # Lover?
+    me = await db.users.find_one({"id": user["id"]}, {"_id": 0, "lover_id": 1})
+    is_lover = (me or {}).get("lover_id") == user_id
+    # Lover request?
+    lr_out = await db.lover_requests.find_one({"from_user_id": user["id"], "to_user_id": user_id, "status": "pending"}, {"_id": 0})
+    lr_in = await db.lover_requests.find_one({"from_user_id": user_id, "to_user_id": user["id"], "status": "pending"}, {"_id": 0})
+    target = await db.users.find_one({"id": user_id}, {"_id": 0, "lover_id": 1})
+    target_has_lover = bool((target or {}).get("lover_id"))
+    return {
+        "is_friend": is_friend,
+        "friend_request_outgoing": fr_out,
+        "friend_request_incoming": fr_in,
+        "is_lover": is_lover,
+        "lover_request_outgoing": lr_out,
+        "lover_request_incoming": lr_in,
+        "i_have_lover": bool((me or {}).get("lover_id")),
+        "target_has_lover": target_has_lover,
+    }
+
 # ---------- Files ----------
 MAX_UPLOAD_SIZE = 2 * 1024 * 1024 * 1024  # 2 GB
 
