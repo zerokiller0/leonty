@@ -18,6 +18,11 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
 
   const bootstrap = useCallback(async () => {
+    // CRITICAL: If returning from Google OAuth callback, skip /me check.
+    // AuthCallback will exchange the session_id and establish the session first.
+    if (typeof window !== "undefined" && window.location.hash?.includes("session_id=")) {
+      return; // leave user as null; AuthCallback will set it
+    }
     try {
       const { data } = await api.get("/auth/me");
       setUser(data.user);

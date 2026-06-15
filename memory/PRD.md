@@ -49,6 +49,12 @@
 - Frontend Workspace.jsx: hover toolbar with Smile/Pencil/Trash2 (DM context only — guarded by `isDM = !!userId`), inline edit textarea (Enter saves, Esc cancels), "(معدّلة)" indicator, "تم حذف هذه الرسالة" placeholder, reactions chip row under message with counts (your reaction is highlighted).
 - Backend test suite: /app/backend/tests/test_iter7_dm_actions.py — 15/15 pass.
 
+## Google Sign-In (2026-06-15) — NEW
+- **Emergent-managed Google OAuth** integrated via `https://auth.emergentagent.com/`.
+- Backend: `POST /api/auth/google/session` — exchanges Emergent session_id via `/auth/v1/env/oauth/session-data`, finds-or-creates user by email, sets standard JWT cookies (reuses existing auth system, no schema fork). Stores google_id + avatar_url + display_name.
+- Frontend: `pages/AuthCallback.jsx` handles `#session_id=` hash in URL (synchronous check in App.js `AppRouter` to prevent race condition with AuthContext bootstrap). AuthContext skips `/me` check when hash contains `session_id=`. Google button on Login page redirects to `auth.emergentagent.com` with `window.location.origin + '/app'` as redirect.
+- **48 legacy guest accounts purged** (along with 16 DMs, 58 sessions, 2 dm_reads).
+
 ## Backlog / Next Phase (P1/P2)
 - Real-time WebSocket messaging (currently polls every 3s) — replace polling.
 - Brute-force lockout using login_attempts collection.

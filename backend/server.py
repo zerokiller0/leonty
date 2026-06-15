@@ -16,6 +16,7 @@ import bcrypt
 import jwt
 import pyotp
 import qrcode
+import httpx
 from io import BytesIO
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, UploadFile, File
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -174,6 +175,9 @@ class UpgradeAccountIn(BaseModel):
     email: EmailStr
     password: str
 
+class GoogleSessionIn(BaseModel):
+    session_id: str
+
 class CallSignalIn(BaseModel):
     to_user_id: str
     type: str  # offer | answer | candidate | hangup | ringing
@@ -312,6 +316,56 @@ async def upgrade_account(body: UpgradeAccountIn, user: dict = Depends(get_curre
     )
     u = await db.users.find_one({"id": user["id"]}, {"_id": 0})
     return {"user": public_user(u)}
+
+# ---------- Emergent Google OAuth ----------
+# REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
+@api.post("/auth/google/session")
+async def google_session(body: GoogleSessionIn, request: Request, response: Response):
+    try:
+        async with httpx.AsyncClient(timeout=15) as cx:
+            r = await cx.get(
+                "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
+                headers={"X-Session-ID": body.session_id},
+            )
+    except httpx.HTTPError as e:
+        raise HTTPException(503, f"Emergent auth unreachable: {e}")
+    if r.status_code != 200:
+        raise HTTPException(401, "Invalid session_id")
+    sd = r.json()
+    email = (sd.get("email") or "").lower().strip()
+    if not email:
+        raise HTTPException(400, "No email returned from provider")
+    existing = await db.users.find_one({"email": email}, {"_id": 0})
+    if existing:
+        user = existing
+        updates = {}
+        if not user.get("avatar_url") and sd.get("picture"):
+            updates["avatar_url"] = sd["picture"]
+        if not user.get("display_name") and sd.get("name"):
+            updates["display_name"] = sd["name"]
+        if updates:
+            await db.users.update_one({"id": user["id"]}, {"$set": updates})
+            user.update(updates)
+    else:
+        uid = str(uuid.uuid4())
+        base_username = (email.split("@")[0] or "user")[:20]
+        user = {
+            "id": uid,
+            "email": email,
+            "username": f"{base_username}_{uid[:4]}",
+            "display_name": sd.get("name") or base_username,
+            "avatar_url": sd.get("picture"),
+            "password_hash": None,
+            "google_id": sd.get("id"),
+            "two_factor_secret": None,
+            "created_at": now_utc().isoformat(),
+        }
+        await db.users.insert_one(user)
+    await log_session(request, user["id"], "google_login")
+    access = create_access(user["id"], email)
+    refresh = create_refresh(user["id"])
+    set_auth_cookies(response, access, refresh)
+    return {"user": public_user(user), "access_token": access}
 
 # ---------- 2FA ----------
 @api.post("/auth/2fa/setup")

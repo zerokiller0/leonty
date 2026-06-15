@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import "./App.css";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { Toaster } from "sonner";
 import Landing from "./pages/Landing";
@@ -8,6 +8,7 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Workspace from "./pages/Workspace";
 import Settings from "./pages/Settings";
+import AuthCallback from "./pages/AuthCallback";
 
 function Protected({ children }) {
   const { user } = useAuth();
@@ -29,6 +30,27 @@ function PublicOnly({ children }) {
   return children;
 }
 
+function AppRouter() {
+  const location = useLocation();
+  // Synchronous check for OAuth callback - prevents AuthProvider race condition
+  if (location.hash?.includes("session_id=")) {
+    return <AuthCallback />;
+  }
+  return (
+    <Routes>
+      <Route path="/" element={<Landing />} />
+      <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />
+      <Route path="/register" element={<PublicOnly><Register /></PublicOnly>} />
+      <Route path="/app" element={<Protected><Workspace /></Protected>} />
+      <Route path="/app/:serverId" element={<Protected><Workspace /></Protected>} />
+      <Route path="/app/:serverId/:channelId" element={<Protected><Workspace /></Protected>} />
+      <Route path="/app/dm/:userId" element={<Protected><Workspace /></Protected>} />
+      <Route path="/settings" element={<Protected><Settings /></Protected>} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}
+
 export default function App() {
   useEffect(() => {
     document.documentElement.setAttribute("dir", "rtl");
@@ -39,17 +61,7 @@ export default function App() {
       <BrowserRouter>
         <AuthProvider>
           <Toaster theme="dark" position="top-left" richColors closeButton />
-          <Routes>
-            <Route path="/" element={<Landing />} />
-            <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />
-            <Route path="/register" element={<PublicOnly><Register /></PublicOnly>} />
-            <Route path="/app" element={<Protected><Workspace /></Protected>} />
-            <Route path="/app/:serverId" element={<Protected><Workspace /></Protected>} />
-            <Route path="/app/:serverId/:channelId" element={<Protected><Workspace /></Protected>} />
-            <Route path="/app/dm/:userId" element={<Protected><Workspace /></Protected>} />
-            <Route path="/settings" element={<Protected><Settings /></Protected>} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+          <AppRouter />
         </AuthProvider>
       </BrowserRouter>
     </div>
