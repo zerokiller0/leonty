@@ -42,6 +42,13 @@
 - Removed encryption messaging from Register/Login pages.
 - Verified login + register + admin login + guest register flows via curl and Playwright.
 
+## DM Message Actions (2026-06-15) — NEW
+- **Edit DM**: PATCH /api/dms/{id} — sender-only, sets edited_at, blocks deleted/attachment messages.
+- **Delete DM**: DELETE /api/dms/{id} — sender-only, soft delete (sets deleted_at, clears content + attachment + reactions).
+- **Reactions**: POST /api/dms/{id}/reactions — participants only, toggle (emoji, user_id) tuple. Quick picker has ❤️😍😂👍🔥😢.
+- Frontend Workspace.jsx: hover toolbar with Smile/Pencil/Trash2 (DM context only — guarded by `isDM = !!userId`), inline edit textarea (Enter saves, Esc cancels), "(معدّلة)" indicator, "تم حذف هذه الرسالة" placeholder, reactions chip row under message with counts (your reaction is highlighted).
+- Backend test suite: /app/backend/tests/test_iter7_dm_actions.py — 15/15 pass.
+
 ## Backlog / Next Phase (P1/P2)
 - Real-time WebSocket messaging (currently polls every 3s) — replace polling.
 - Brute-force lockout using login_attempts collection.
