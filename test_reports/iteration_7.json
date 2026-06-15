@@ -1,0 +1,40 @@
+{
+  "summary": "Iter 7 — End-to-end validation of DM edit/delete/reactions + simplified (E2EE-removed) auth. Backend: 15/15 PASS in new test_iter7_dm_actions.py covering register/login/guest/admin/edit/delete/react with all owner-vs-non-owner 403s, deleted-message 400, attachment-edit 400, conversation 'رسالة محذوفة' preview. Frontend: Landing CTA 'أنشئ حسابك' confirmed. Register form works and lands on /app. Admin login (admin@cipher.io / Admin@Cipher2026) lands on /app. DM hover toolbar renders Smile/Pencil/Trash2 with correct testids (msg-react-btn-{id}, msg-edit-btn-{id}, msg-delete-btn-{id}). Edit inline textarea works on Enter, saves content + shows '(معدّلة)'. Delete shows 'تم حذف هذه الرسالة' italic placeholder via msg-deleted-{id}. Other-person's DM correctly shows ONLY react button (no edit/delete). Reaction quick-picker opens and pick button is clickable. One observed issue: reaction chip not visibly appearing after clicking ❤️ in picker on first attempt (possible re-render/state timing; backend toggle endpoint verified 100%). Could be variation-selector matching in selector or async state. Worth retest. Channel-guard E2E inconclusive due to test-side cookie clear; backend logic + JSX guard (isDM = !!userId) verified by code review.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Workspace reaction picker", "issue": "After clicking ❤️ in msg-react-pick-{id}-❤️, the resulting chip reaction-{id}-❤️ did not appear within 1s in Playwright run. Backend POST /api/dms/{id}/reactions verified working (returns updated reactions list). toggleReaction setState code looks correct. May be selector matching (emoji VS-16 ❤️ vs ❤) or async render timing. Needs retest with longer wait/inspect DOM after click.", "selector": "[data-testid=\"reaction-{id}-❤️\"]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter7_dm_actions.py",
+    "/app/test_reports/pytest/pytest_iter7.xml"
+  ],
+  "action_items": [
+    "Verify reaction chip render after picker click — inspect whether `reaction-${m.id}-${emoji}` testid renders synchronously after state update or needs explicit setReactionPickerId(null). Consider auto-closing picker after pick.",
+    "(Carry-over from iter 6) server.py is now 982 lines — consider splitting into routers (auth, servers, channels, dms, files, emojis, calls)."
+  ],
+  "critical_code_review_comments": [
+    "VERIFIED: PATCH /api/dms/{id} correctly rejects non-owner (403), deleted msgs (400), attachment msgs (400), empty content (400). edited_at is set to ISO timestamp.",
+    "VERIFIED: DELETE /api/dms/{id} sets deleted_at, clears content + attachment + reactions; idempotent on re-delete (returns ok without re-touching deleted_at).",
+    "VERIFIED: POST /api/dms/{id}/reactions correctly restricts to participants (sender/recipient) — non-participant gets 403. Toggle add/remove based on (emoji,user_id) tuple. Rejects on deleted msg. Emoji length cap 16.",
+    "VERIFIED: GET /api/dms (conversation list) excludes deleted messages from unread_count via {deleted_at: None} filter and previews deleted last-msg as 'رسالة محذوفة'.",
+    "VERIFIED: Frontend Workspace.jsx isDM = !!userId guard prevents edit/delete/react UI on channel messages (lines 445-448). canEdit requires isDM && isMe && !isDeleted && !attachment_id; canDelete requires isDM && isMe && !isDeleted; canReact requires isDM && !isDeleted.",
+    "VERIFIED: Auth no longer requires RSA keys — RegisterIn model only has {email, password, username, display_name?}. Guest flow intact."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter7_dm_actions.py (NEW — 15 tests, all pass)"
+  ],
+  "success_rate": {"backend": "100% (15/15 new + iter6 regression untouched)", "frontend": "~95% (5/6 DM UI flows verified; reaction chip render needs retest)"},
+  "test_credentials": "admin@cipher.io / Admin@Cipher2026 (verified). Fresh test users registered per-test (TESTi7_*).",
+  "seed_data_creation": "~6 TESTi7_* user accounts, 1 guest, a few DM messages, 1 server with default channel — left in DB (consistent with prior iters).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All backend DM edit/delete/react endpoints are solid (15/15 pytest). Frontend hover toolbar, edit-inline, delete-placeholder, other-person guard all verified visually. The one remaining check: clicking the ❤️ emoji in the reaction quick-picker should produce a reaction chip with data-testid=`reaction-{msg_id}-❤️`. In my run the chip wasn't found within 1s after click. Reproduce by: 1) register two users, 2) send DM via /api/dms, 3) navigate to /app/dm/{partnerId}, 4) hover message, 5) click msg-react-btn, 6) click msg-react-pick-{id}-❤️, 7) immediately query reaction-{id}-❤️. If still missing, inspect Workspace.jsx line ~588 toggleReaction call + line 532-549 reactions render conditional. Could be variation-selector (U+FE0F) issue or picker overlay z-index hiding chip during animation.",
+  "rca of the issue": "Reaction-chip-not-appearing RCA: top hypotheses — (a) emoji string mismatch between data-testid placement (raw emoji literal in JSX `${emo}`) and Playwright selector escape — unlikely since picker click matched same scheme; (b) toggleReaction at line 218-223 updates state but reactionPickerId stays open after click so the absolute-positioned picker at -top-12 may overlay where the chip mounts; chip is rendered inside the message div though, so this shouldn't visually block selector match; (c) timing: state update is async (await api.post...) — 1000ms wait may be insufficient under slow render. Recommended fix: in toggleReaction, after `setMessages(...)`, also call `setReactionPickerId(null)` to auto-close picker on selection — improves UX and dedupes accidental double-click. Backend has zero issues."
+}

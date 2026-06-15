@@ -12,7 +12,7 @@ import {
   Heart, Plus, Hash, Settings as SettingsIcon, LogOut, Search, Send,
   Lock, MessageCircle, Copy, X, Smile, Trash2, ImagePlus, Phone, Video,
   Film, Sticker as StickerIcon, Calendar, Paperclip, Download, FileIcon, Image as ImageIcon,
-  UserPlus, Check, UserX,
+  UserPlus, Check, UserX, Pencil,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -425,7 +425,6 @@ export default function Workspace() {
             const text = m.plaintext !== undefined ? m.plaintext : m.content;
             const cleanText = text?.split("|attachment:")[0] || "";
             const attachId = m.attachment_id;
-            // Parse metadata from content tail
             const meta = {};
             (text || "").split("|").forEach(part => {
               const idx = part.indexOf(":");
@@ -442,8 +441,23 @@ export default function Workspace() {
             const cls = !attachId ? classifyMessage(cleanText, emojiMap) : { kind: "text" };
             const isBig = cls.kind === "big-emoji" || cls.kind === "big-emoji-unicode" || cls.kind === "sticker";
             const fileUrl = attachId ? `${BASE}/api/files/${attachId}` : null;
+            const isDeleted = !!m.deleted_at;
+            const isDM = !!userId;
+            const canEdit = isDM && isMe && !isDeleted && !attachId;
+            const canDelete = isDM && isMe && !isDeleted;
+            const canReact = isDM && !isDeleted;
+            const isEditing = editingMsgId === m.id;
+            // Group reactions by emoji
+            const reactionGroups = {};
+            (m.reactions || []).forEach((r) => {
+              if (!reactionGroups[r.emoji]) reactionGroups[r.emoji] = [];
+              reactionGroups[r.emoji].push(r.user_id);
+            });
             return (
-              <div key={m.id} data-testid={`message-${m.id}`} className="animate-chat-in flex gap-3">
+              <div key={m.id} data-testid={`message-${m.id}`}
+                onMouseEnter={() => setHoveredMsgId(m.id)}
+                onMouseLeave={() => { setHoveredMsgId((h) => h === m.id ? null : h); }}
+                className="animate-chat-in flex gap-3 group relative">
                 <Avatar user={senderUser} size={36} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-baseline gap-2 mb-1">
@@ -451,8 +465,33 @@ export default function Workspace() {
                     <span className="font-mono-key text-[10px] text-[var(--muted-soft)]">
                       {new Date(m.created_at).toLocaleString("ar")}
                     </span>
+                    {m.edited_at && !isDeleted && (
+                      <span className="text-[10px] text-[var(--muted-soft)] italic">(معدّلة)</span>
+                    )}
                   </div>
-                  {isAudio ? (
+                  {isDeleted ? (
+                    <div className="inline-block px-4 py-2 text-xs italic rounded-2xl bg-[var(--surface)]/60 text-[var(--muted)]" data-testid={`msg-deleted-${m.id}`}>
+                      تم حذف هذه الرسالة
+                    </div>
+                  ) : isEditing ? (
+                    <div className="space-y-2 max-w-2xl">
+                      <textarea value={editingText} onChange={(e) => setEditingText(e.target.value)}
+                        data-testid={`msg-edit-input-${m.id}`}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); saveEditMsg(); }
+                          if (e.key === "Escape") { cancelEditMsg(); }
+                        }}
+                        autoFocus rows={2}
+                        className="w-full px-4 py-2 text-sm rounded-2xl bg-[var(--surface)] border border-[var(--accent)]/40 outline-none focus:border-[var(--accent)] resize-y" />
+                      <div className="flex gap-2 text-xs">
+                        <button onClick={saveEditMsg} data-testid={`msg-edit-save-${m.id}`}
+                          className="btn-rose px-3 py-1.5 rounded-full">حفظ</button>
+                        <button onClick={cancelEditMsg} data-testid={`msg-edit-cancel-${m.id}`}
+                          className="px-3 py-1.5 rounded-full bg-[var(--surface)] hover:bg-[var(--surface-hover)]">إلغاء</button>
+                        <span className="self-center text-[10px] text-[var(--muted-soft)]">Enter للحفظ · Esc للإلغاء</span>
+                      </div>
+                    </div>
+                  ) : isAudio ? (
                     <div className={`inline-block px-4 py-2.5 text-sm rounded-2xl ${isMe ? "gradient-rose text-white" : "bg-[var(--surface)] text-[var(--text)]"}`}>
                       <div className="flex items-center gap-2"><span>🎤</span><audio controls src={fileUrl} className="h-8 max-w-xs" /></div>
                     </div>
@@ -487,7 +526,77 @@ export default function Workspace() {
                       <MessageContent text={cleanText} />
                     </div>
                   )}
+
+                  {/* Reactions row */}
+                  {!isDeleted && Object.keys(reactionGroups).length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-1.5" data-testid={`reactions-${m.id}`}>
+                      {Object.entries(reactionGroups).map(([emoji, users]) => {
+                        const youReacted = users.includes(user.id);
+                        return (
+                          <button key={emoji}
+                            onClick={() => canReact && toggleReaction(m.id, emoji)}
+                            data-testid={`reaction-${m.id}-${emoji}`}
+                            disabled={!canReact}
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs transition-colors border ${
+                              youReacted
+                                ? "bg-[var(--accent)]/20 border-[var(--accent)]/60 text-[var(--accent)]"
+                                : "bg-[var(--surface)] border-[var(--border)] hover:bg-[var(--surface-hover)]"
+                            }`}>
+                            <span>{emoji}</span>
+                            <span className="font-mono-key">{users.length}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
+
+                {/* Hover actions (DM only) */}
+                {!isEditing && (canEdit || canDelete || canReact) && hoveredMsgId === m.id && (
+                  <div dir="rtl" data-testid={`msg-actions-${m.id}`}
+                    className="absolute -top-3 left-3 z-10 flex items-center gap-1 px-1.5 py-1 rounded-full bg-[var(--bg)] border border-[var(--border)] shadow-lg">
+                    {canReact && (
+                      <button onClick={(e) => { e.stopPropagation(); setReactionPickerId(reactionPickerId === m.id ? null : m.id); }}
+                        data-testid={`msg-react-btn-${m.id}`}
+                        title="إضافة تفاعل"
+                        className="w-7 h-7 rounded-full hover:bg-[var(--accent)]/10 hover:text-[var(--accent)] flex items-center justify-center text-[var(--muted)]">
+                        <Smile size={14} />
+                      </button>
+                    )}
+                    {canEdit && (
+                      <button onClick={() => startEditMsg(m)} data-testid={`msg-edit-btn-${m.id}`}
+                        title="تعديل"
+                        className="w-7 h-7 rounded-full hover:bg-[var(--accent)]/10 hover:text-[var(--accent)] flex items-center justify-center text-[var(--muted)]">
+                        <Pencil size={13} />
+                      </button>
+                    )}
+                    {canDelete && (
+                      <button onClick={() => deleteMsg(m.id)} data-testid={`msg-delete-btn-${m.id}`}
+                        title="حذف"
+                        className="w-7 h-7 rounded-full hover:bg-[var(--error)]/15 hover:text-[var(--error)] flex items-center justify-center text-[var(--muted)]">
+                        <Trash2 size={13} />
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* Reaction quick-picker */}
+                {reactionPickerId === m.id && canReact && (
+                  <div dir="rtl" data-testid={`msg-react-picker-${m.id}`}
+                    className="absolute -top-12 left-3 z-20 flex items-center gap-1 px-2 py-1.5 rounded-full bg-[var(--bg)] border border-[var(--accent)]/40 shadow-xl">
+                    {["❤️", "😍", "😂", "👍", "😢", "🔥"].map((emo) => (
+                      <button key={emo} onClick={() => toggleReaction(m.id, emo)}
+                        data-testid={`msg-react-pick-${m.id}-${emo}`}
+                        className="w-8 h-8 rounded-full hover:bg-[var(--accent)]/10 hover:scale-125 transition-transform text-lg flex items-center justify-center">
+                        {emo}
+                      </button>
+                    ))}
+                    <button onClick={() => setReactionPickerId(null)}
+                      className="w-7 h-7 rounded-full hover:bg-[var(--surface-hover)] text-[var(--muted)] flex items-center justify-center">
+                      <X size={12} />
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })}
